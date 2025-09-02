@@ -24,7 +24,7 @@ filesdir="${filesdir}/*"
 numFiles="$(grep -c $2 ${filesdir} | wc -l)" 
 
 #grep -o outputs each match on a separate line according to the grep man page
-numLines="$(grep -o $2 ${filesdir} | wc -l)" 
+numLines="$(grep -o $2 ${filesdir} | wc -l)"  
 
 
 echo "The number of files are ${numFiles} and the number of matching lines are ${numLines}"
