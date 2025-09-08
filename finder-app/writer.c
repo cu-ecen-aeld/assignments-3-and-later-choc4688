@@ -1,23 +1,3 @@
-//Use file IO as described in LSP chapter 2
-//See assignment 1 reqs for writer.sh
-//Additional instructions: Do not need to make writer util create directories that don't exist. 
-    //Can assume directory is created by the caller
-
-//Setup syslog logging for your utility using the LOG_USER facility
-
-//Use the syslog capability to write a message "Writing <string> to <file>" where <string is the text written to file
-    //(2nd arg) and file is the file created by the script. 
-    //This should be written with LOG_DEBUG level.
-
-//Use the syslog capability to log any unexpected errors with LOG_ERR level.
-
-
-//Assignment 1 reqs:
-    //Accept full path to file as 1 arg (writefile) and 2nd arg is text string to write to the file, writestr
-    //Exit value 1 error and print statements if any of the args were not specified
-    //Creates a new file name writefile with content writestr, overwriting any existing file.
-    //Exits with value 1 and error print statement if the file could not be created
-
 #include <string.h>
 #include <syslog.h>
 
@@ -29,6 +9,8 @@
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
+
+    //References were LSP Ch2 and syslog man pages.
 
     //NULL as first param sets identity to the program name apparently.
     openlog(NULL, LOG_CONS, LOG_USER);
