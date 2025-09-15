@@ -158,7 +158,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         exit(EXIT_SUCCESS);
 
     }
-    else { //Parent Process
+    else { //Parent Process 
         wait(&status);
         close(fd);
 
