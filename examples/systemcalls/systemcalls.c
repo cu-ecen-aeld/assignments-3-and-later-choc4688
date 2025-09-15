@@ -1,4 +1,10 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <sys/types.h>
+#include <stdio.h>
+#include <sys/wait.h> 
+#include <unistd.h>
+#include <fcntl.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -16,8 +22,14 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int error = system(cmd);
 
-    return true;
+    if (error) {
+        return false;
+    }
+    else {
+        return true;
+    }
 }
 
 /**
@@ -59,6 +71,32 @@ bool do_exec(int count, ...)
  *
 */
 
+    //child_pid = new PID if parent process, 0 if child process
+    pid_t child_pid = fork();
+    int status;
+
+    if (child_pid == -1) {
+        return false;
+    }
+    else if (child_pid == 0) { //Child Process
+        int ret = execv(command[0], command); 
+
+        //Reference: LSP and asking Copilot for examples on how to correctly exit child processes
+        if (ret == -1) {
+            exit(EXIT_FAILURE);  //Signal failure to parent process after wait()
+        }
+
+        exit(EXIT_SUCCESS);
+    }
+    else { //Parent process
+        wait(&status);
+
+        //Checks that wait() succeeded and the child process did not return an error status
+        if (status != 0) {
+            return false;
+        }
+    }
+
     va_end(args);
 
     return true;
@@ -92,6 +130,45 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+
+    //child_pid = new PID if parent process, 0 if child process
+    pid_t child_pid = fork();
+    int status;
+
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+
+    if (child_pid == -1) {
+        return false;
+    }
+    else if (child_pid == 0) { //Child Process
+
+        //*****************
+        if (dup2(fd, 1) < 0) { 
+            return false;
+        }
+        close(fd);
+
+        int ret = execv(command[0], command); 
+
+        //Reference: LSP and asking Copilot for examples on how to correctly exit child processes
+        if (ret == -1) {
+            exit(EXIT_FAILURE);  //Signal failure to parent process after wait()
+        }
+        
+        exit(EXIT_SUCCESS);
+
+    }
+    else { //Parent Process
+        wait(&status);
+        close(fd);
+
+        //Checks that wait() succeeded and the child process did not return an error status
+        if (status != 0) {
+            return false;
+        }
+
+    }
+
 
     va_end(args);
 
