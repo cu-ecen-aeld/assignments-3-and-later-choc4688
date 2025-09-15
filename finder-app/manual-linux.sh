@@ -37,7 +37,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     # TODO: Add your kernel build steps here
 
         #Deep cleans the kernel build tree, removes .config file with any configs
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
+    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
         #Configure for the "virt" arm dev board, will simulate in QEMU
     echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig"
     make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
@@ -45,15 +45,15 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
         #Build a kernel image for booting with QEMU
         #-j4 allows running multiple files at ones, can speed up process
     echo "make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all"
-    make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all
+    sudo make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all
     
 
         #Build any kernel modules
     echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules"
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
+    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
         #Build the device tree
     echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs "
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs  
+    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs  
 
 #------------------------------------------
 
@@ -119,8 +119,10 @@ make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} 
 #-----------------------------------------------
 
 echo "Library dependencies"
-${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" #Was getting error saying bin/busybox didn't exist as a directory**************************
-${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" #**********************
+
+#Was getting error saying bin/busybox didn't exist as a directory..... But I did get the correct output with ${OUTDIR}....?
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" 
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" 
 
 # TODO: Add library dependencies to rootfs
 
@@ -142,11 +144,14 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" 
         #-m ### for access permissions
 
         #Then <major> and <minor> params, known / defined for null and console devices
+    rm -f "${OUTDIR}/dev/null" #Done because error otherwise when it already exists
+
     mknod -m 666 ${OUTDIR}/dev/null c 1 3
 
     echo "Now creating console"
     
     #Console device for interacting through the terminal
+    rm -f "${OUTDIR}/dev/console"
     mknod -m 600 ${OUTDIR}/dev/console c 5 1
 
     #-----------------------------------------------
@@ -195,6 +200,8 @@ sudo chown -R root:root *
 
     cd "$OUTDIR"
     gzip -f initramfs.cpio
+
+
 
 
     echo "Complete!"
