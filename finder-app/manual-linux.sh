@@ -40,7 +40,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     # TODO: Add your kernel build steps here
 
         #Deep cleans the kernel build tree, removes .config file with any configs
-    echo "sudo make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} mrproper"
+    echo "make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} mrproper"
     make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} mrproper
         #Configure for the "virt" arm dev board, will simulate in QEMU
     echo "make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} defconfig"
@@ -65,6 +65,10 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
 fi
 
 echo "Adding the Image in outdir"
+
+    #Note: Used Copilot to determine why I was getting a missing kernel image error in start-qemu-terminal.sh
+    # (It was because I wasn't copying the Image to /tmp/aeld/Image)
+    cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR} #Just copy into outdir*************
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -103,15 +107,15 @@ else
     cd busybox
 fi
 
-    export TOOLCHAIN_DIR=/home/chaseo/Documents/ARM/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/bin
-    export PATH=$TOOLCHAIN_DIR:$PATH
-    export CROSS_COMPILE=aarch64-none-linux-gnu-
+    # export TOOLCHAIN_DIR=/home/chaseo/Documents/ARM/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/bin
+    # export PATH=$TOOLCHAIN_DIR:$PATH
+    # export CROSS_COMPILE=aarch64-none-linux-gnu-
 
-    which ${CROSS_COMPILE}gcc
+    # which ${CROSS_COMPILE}gcc
 
-echo "1"
+# echo "1"
 
-echo "Compiler path: $(which ${CROSS_COMPILE}gcc)"
+# echo "Compiler path: $(which ${CROSS_COMPILE}gcc)"
 
 
 # TODO: Make and install busybox
@@ -119,13 +123,18 @@ echo "Compiler path: $(which ${CROSS_COMPILE}gcc)"
 export ARCH=arm64
 export CROSS_COMPILE=aarch64-none-linux-gnu-
 
-cd ${OUTDIR}/rootfs #****************
+# cd ${OUTDIR}/rootfs #****************
 
 make distclean
-make CROSS_COMPILE=aarch64-none-linux-gnu- ARCH=arm64 defconfig
+# make CROSS_COMPILE=aarch64-none-linux-gnu- ARCH=arm64 defconfig
+make defconfig #***************
 make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
 #Install step copies busybox into root fs and creates all symbolic links necessary
 make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
+
+#Instructions say print sysroot. Find sysroot dir, arm-gcc sysroot outputs, assign to variable, then sudo cp
+#Should have installed ARM toolchain into root, not Documents
+#Use sudo to install in root lib
 
 #-----------------------------------------------
 
@@ -187,6 +196,7 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
     echo "Clean and build the writer utility"
 
+    #Get real path, don't use this********************
     cd /home/chaseo/Documents/AESD/Assignment3+/assignments-3-and-later-choc4688/finder-app
 
     make clean
@@ -220,9 +230,7 @@ sudo chown -R root:root *
 # TODO: Create initramfs.cpio.gz
 
 
-    #Note: Used Copilot to determine why I was getting a missing kernel image error in start-qemu-terminal.sh
-    # (It was because I wasn't copying the Image to /tmp/aeld/Image)
-    cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image /tmp/aeld/Image
+
 
 
     #To use the rootfs with the target
