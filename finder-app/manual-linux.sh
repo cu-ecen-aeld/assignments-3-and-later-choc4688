@@ -13,6 +13,9 @@ FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
 
+export PATH=$PATH:/home/chaseo/Documents/ARM/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/bin
+
+
 if [ $# -lt 1 ]
 then
 	echo "Using default directory ${OUTDIR} for output"
@@ -37,23 +40,24 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     # TODO: Add your kernel build steps here
 
         #Deep cleans the kernel build tree, removes .config file with any configs
-    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
+    echo "sudo make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} mrproper"
+    make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} mrproper
         #Configure for the "virt" arm dev board, will simulate in QEMU
-    echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig"
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
+    echo "make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} defconfig"
+    make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} defconfig
     
         #Build a kernel image for booting with QEMU
         #-j4 allows running multiple files at ones, can speed up process
-    echo "make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all"
-    sudo make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all
+    echo "make -j4 ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} all"
+    make -j4 ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} all
     
 
         #Build any kernel modules
-    echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules"
-    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
+    echo "make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} modules"
+    make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} modules
         #Build the device tree
-    echo "make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs "
-    sudo make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs  
+    echo "make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} dtbs "
+    make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} dtbs  
 
 #------------------------------------------
 
@@ -72,9 +76,14 @@ fi
 
 # TODO: Create necessary base directories
 
+mkdir rootfs
+cd "${OUTDIR}/rootfs"
+
 mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
 mkdir -p usr/bin usr/lib usr/sbin
 mkdir -p var/log
+
+
 
 #-----------------------------------------------
 
@@ -110,6 +119,8 @@ echo "Compiler path: $(which ${CROSS_COMPILE}gcc)"
 export ARCH=arm64
 export CROSS_COMPILE=aarch64-none-linux-gnu-
 
+cd ${OUTDIR}/rootfs #****************
+
 make distclean
 make CROSS_COMPILE=aarch64-none-linux-gnu- ARCH=arm64 defconfig
 make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
@@ -144,15 +155,31 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
         #-m ### for access permissions
 
         #Then <major> and <minor> params, known / defined for null and console devices
-    rm -f "${OUTDIR}/dev/null" #Done because error otherwise when it already exists
+    # sudo rm -f "${OUTDIR}/dev/null" #Done because error otherwise when it already exists
 
-    mknod -m 666 ${OUTDIR}/dev/null c 1 3
+    if [ -f "${OUTDIR}/rootfs/dev/null" ]
+    then
+        : 
+    else
+        sudo rm -f "${OUTDIR}/rootfs/dev/null"
+        sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
+    fi
+    
 
     echo "Now creating console"
     
     #Console device for interacting through the terminal
-    rm -f "${OUTDIR}/dev/console"
-    mknod -m 600 ${OUTDIR}/dev/console c 5 1
+    # sudo rm -f "${OUTDIR}/dev/console"
+
+    if [ -f "${OUTDIR}/rootfs/dev/console" ]
+    then
+        :
+    else
+        sudo rm -f "${OUTDIR}/rootfs/dev/console"
+        sudo mknod -m 600 ${OUTDIR}/rootfs/dev/console c 5 1
+    fi
+
+    
 
     #-----------------------------------------------
 
@@ -192,16 +219,30 @@ sudo chown -R root:root *
 
 # TODO: Create initramfs.cpio.gz
 
+
+    #Note: Used Copilot to determine why I was getting a missing kernel image error in start-qemu-terminal.sh
+    # (It was because I wasn't copying the Image to /tmp/aeld/Image)
+    cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image /tmp/aeld/Image
+
+
     #To use the rootfs with the target
     #QEMU emulation environment acts as bootloader in this case
-
     cd "$OUTDIR/rootfs" 
     find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
 
     cd "$OUTDIR"
     gzip -f initramfs.cpio
 
-
-
-
     echo "Complete!"
+
+    # #Debug
+    # mkdir /tmp/testfs
+    # cd /tmp/testfs
+    # gzip -dc ${OUTDIR}/initramfs.cpio.gz | cpio -idmv
+    # ls -l bin/sh
+    # ls -l dev/console
+    # #******
+
+    exit 0
+
+
