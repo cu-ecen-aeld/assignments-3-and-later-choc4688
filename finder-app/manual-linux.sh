@@ -211,12 +211,16 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
     cp writer ${OUTDIR}/rootfs/home
 
     cp finder.sh ${OUTDIR}/rootfs/home
-    cp ../conf/username.txt ${OUTDIR}/rootfs/home
-    cp ../conf/assignment.txt ${OUTDIR}/rootfs/home
+
+    mkdir ${OUTDIR}/rootfs/home/conf
+    cp ../conf/username.txt ${OUTDIR}/rootfs/home/conf
+    cp ../conf/assignment.txt ${OUTDIR}/rootfs/home/conf
 
     cp autorun-qemu.sh ${OUTDIR}/rootfs/home
 
-    cp start-qemu-app.sh ${OUTDIR}/rootfs/home
+    cp finder-test.sh ${OUTDIR}/rootfs/home
+
+
 
 #-----------------------------------------------
 
