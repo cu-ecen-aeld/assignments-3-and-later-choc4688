@@ -68,7 +68,7 @@ echo "Adding the Image in outdir"
 
     #Note: Used Copilot to determine why I was getting a missing kernel image error in start-qemu-terminal.sh
     # (It was because I wasn't copying the Image to /tmp/aeld/Image)
-    cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR} #Just copy into outdir*************
+    cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/ #Just copy into outdir*************
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -215,6 +215,8 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
     cp ../conf/assignment.txt ${OUTDIR}/rootfs/home
 
     cp autorun-qemu.sh ${OUTDIR}/rootfs/home
+
+    cp start-qemu-app.sh ${OUTDIR}/rootfs/home
 
 #-----------------------------------------------
 
