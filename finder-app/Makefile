@@ -65,5 +65,8 @@ writer.o: writer.c
 #writer: writer.c
 #cc writer.c -o writer
 
+all: writer.c
+	$(CC) writer.c -o writer
+
 clean: 
 	rm -f writer writer.o
