@@ -52,8 +52,8 @@ then
 fi
 
 # echo "Removing the old writer utility and compiling as a native application"
-# make clean
-# make
+make clean
+make
 
 for i in $( seq 1 $NUMFILES)
 do
@@ -63,13 +63,6 @@ done
 
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
 
-
-touch $(OUTPUTFILE)
-if [ $? -ne 0 ]
-then
-    echo "$(OUTPUTFILE) could not be created."
-    exit 1
-fi
 
 echo "$(OUTPUTSTRING)" > $(OUTPUTFILE)
 
