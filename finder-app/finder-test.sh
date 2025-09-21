@@ -64,7 +64,7 @@ done
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
 
 
-echo "$(OUTPUTSTRING)" > $(OUTPUTFILE)
+echo "${OUTPUTSTRING}" > "${OUTPUTFILE}"
 
 
 
