@@ -10,6 +10,7 @@ WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
 username=$(cat /etc/finder-app/conf/username.txt)
 
+
 OUTPUTFILE=/tmp/assignment4-result.txt
 
 if [ $# -lt 3 ]
@@ -36,6 +37,7 @@ rm -rf "${WRITEDIR}"
 # create $WRITEDIR if not assignment1
 assignment=`cat /etc/finder-app/conf/assignment.txt` 
 
+
 if [ $assignment != 'assignment1' ]
 then
 	mkdir -p "$WRITEDIR"
@@ -52,8 +54,8 @@ then
 fi
 
 # echo "Removing the old writer utility and compiling as a native application"
-make clean
-make
+# make clean
+# make
 
 for i in $( seq 1 $NUMFILES)
 do
@@ -63,6 +65,8 @@ done
 
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
 
+echo "Debug OUTPUTSTRING: ${OUTPUTSTRING}"
+echo "Debug OUTPUTFILE: ${OUTPUTFILE}"
 
 echo "${OUTPUTSTRING}" > "${OUTPUTFILE}"
 
