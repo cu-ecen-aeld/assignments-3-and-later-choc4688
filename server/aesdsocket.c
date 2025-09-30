@@ -68,6 +68,15 @@ int main(int argc, char *argv[]) {
     //Set up logging since there is a daemon option for this program.
     openlog(NULL, LOG_CONS, LOG_USER);
 
+    //Truncating file in case the last run had a kill signal and bypassed handling
+    fptr = fopen(TEMP_FILE, "w");
+    if (!fptr) {
+        syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
+        exit(EXIT_FAILURE);
+    }
+    fclose(fptr);
+
+
     //-------------------Signal Setup-----------------------------
 
     struct sigaction new_action;
@@ -124,6 +133,7 @@ int main(int argc, char *argv[]) {
     if (status == -1) {
         //  perror("Failed to bind\n");
          syslog(LOG_ERR, "Failed to bind\n");
+         freeaddrinfo(servinfo); //Identified single missing free w/ valgrind and AI
          return -1;
     }
 
@@ -239,6 +249,7 @@ int main(int argc, char *argv[]) {
         if (connfd == -1) {
             // perror("Failed to accept\n");
             syslog(LOG_ERR, "Failed accept()\n");
+            freeaddrinfo(servinfo);
             return -1;
         }
 
@@ -325,10 +336,6 @@ int main(int argc, char *argv[]) {
         free(line);
 
         syslog(LOG_INFO, "Closed connection from %s\n", ipv4str);
-
-
-
-
 
     }
     
