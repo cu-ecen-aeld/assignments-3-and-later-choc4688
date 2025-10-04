@@ -11,6 +11,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <pthread.h>
+#include <stdbool.h>
+
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "queue.h"
 
 #define MAX_PACKET_SIZE 65536 //Buffer size for recv. Needs to be large enough to handle long-string.txt
 #define TEMP_FILE "/var/tmp/aesdsocketdata"
@@ -23,6 +30,108 @@ struct addrinfo hints;
 struct addrinfo *servinfo; //Points to results of getaddrinfo() after the function is called.
 char* pbuff;
 char* outpbuff;
+
+
+
+typedef struct slist_data_s slist_data_t;
+struct slist_data_s {
+    int value;
+    SLIST_ENTRY(slist_data_s) entries;
+};
+
+struct thread_data{
+
+    pthread_mutex_t* fileMutex;
+    char* pbuffPtr;
+    char* outpbuffPtr;
+    char* outLine;
+    int* connfd;
+    char* ipaddrStr;
+    bool completeFlag;
+};
+
+void* threadfunc(void* thread_param) {
+
+    struct thread_data* thread_func_args = (struct thread_data *) thread_param;
+
+    //size_t unsigned, ssize_t signed
+    size_t totalLen = 0;
+    ssize_t numRecvBytes;
+
+    while ((numRecvBytes = recv(*thread_func_args->connfd, pbuff + totalLen, MAX_PACKET_SIZE - totalLen, 0)) > 0) {
+        totalLen += numRecvBytes;
+        if (memchr(pbuff, '\n', totalLen)) { 
+            break;
+        }
+        if (totalLen >= MAX_PACKET_SIZE) {
+            syslog(LOG_ERR, "Discarding oversized packet");
+            totalLen = 0;
+            break;
+        }
+    }
+    if (numRecvBytes > MAX_PACKET_SIZE) { //Over buffer size error
+        totalLen = 0;
+        memset(pbuff, 0, MAX_PACKET_SIZE);
+        perror("Received more bytes than available in receive buffer.");
+        syslog(LOG_ERR, "Received more bytes than available in receive buffer.");
+        thread_func_args->completeFlag = false;
+    }
+    else {
+        //---------------------MUTEX LOCK-----------------------
+        int status = pthread_mutex_lock(thread_func_args->fileMutex);
+        if (status != 0) {
+            perror("Obtaining mutex lock failed.");
+            syslog(LOG_ERR, "Obtaining mutex lock failed.");
+            thread_func_args->completeFlag = false;
+        }
+        else {
+            fptr = fopen(TEMP_FILE, "a+"); 
+            if (!fptr) {
+                perror("Error opening or creating file.\n");
+                syslog(LOG_ERR, "Failed fopen()\n");
+            }
+
+            //Separate and append each packet (ended w/ '\n') to the file
+            size_t startPacket = 0;
+            for (size_t i = 0; i < numRecvBytes; i++) {
+                if (pbuff[i] == '\n') {
+                    size_t packetLen = i - startPacket + 1;
+                    fwrite(pbuff + startPacket, 1, packetLen, fptr);
+                    startPacket = i + 1;
+                    status = fflush(fptr); //Needs to occur before rewind****
+                    if (status != 0) {
+                        syslog(LOG_ERR, "Failed fflush()\n");
+                    }
+                    //Need to return full file content to client as soon as received data packet completes
+                    //Need to send each line individually. Can't load the full file into RAM b/c of constraints.
+                    ssize_t lineLength;
+                    size_t len = 0;
+                    rewind(fptr); //Returns nothing
+                    while ((lineLength = getline(thread_func_args->outLine, &len, fptr)) != -1) {
+                        status = send(*thread_func_args->connfd, thread_func_args->outLine, lineLength, 0); 
+                        if (status == -1) {
+                            syslog(LOG_ERR, "Failed send()\n");
+                        }
+                    } 
+                }
+            }
+            status = pthread_mutex_unlock(thread_func_args->fileMutex);
+            if (status != 0) {
+                perror("Releasing mutex lock failed.");
+                thread_func_args->completeFlag = false;
+            }
+            else {
+                thread_func_args->completeFlag = true;
+            }
+            //------------------END MUTEX LOCK-----------------------
+        }
+    }
+
+    close(*thread_func_args->connfd); //**********-1 flag ---------------
+    syslog(LOG_INFO, "Closed connection from %s\n", thread_func_args->ipaddrStr);
+
+    return thread_param;
+}
 
 
 /*
@@ -107,7 +216,6 @@ int main(int argc, char *argv[]) {
     }
 
     //Setting REUSEADDR to avoid bind issues:
-    //Reference: https://stackoverflow.com/questions/24194961/how-do-i-use-setsockoptso-reuseaddr
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
         syslog(LOG_ERR, "Failed to set socket options\n");
         return -1;
@@ -224,8 +332,16 @@ int main(int argc, char *argv[]) {
         syslog(LOG_ERR, "Failed inet_ntop()\n");
     }
 
-    syslog(LOG_INFO, "Accepted connection from %s\n", ipv4str);
 
+    //---------THREADING------------
+
+    pthread_mutex_t* fileMutex;
+    slist_data_t* dataPtr = NULL;
+    SLIST_HEAD(slisthead, slist_data_s) head;
+    SLIST_INIT(&head);
+    int threadCount = 0;
+
+    //------------------------------
 
     //Main Connection Loop
     //Runs until SIGINT or SIGTERM are called
@@ -252,90 +368,85 @@ int main(int argc, char *argv[]) {
             freeaddrinfo(servinfo);
             return -1;
         }
+        syslog(LOG_INFO, "Accepted connection from %s\n", ipv4str);
 
-        //Reference: https://www.w3schools.com/c/c_files_write.php
-        //Reference: https://man7.org/linux/man-pages/man3/fopen.3.html
-        //'a+' opens in append mode, so subsequent 'fwrite' calls append instead, + means read and write, creates files if DNE
-        fptr = fopen(TEMP_FILE, "a+"); 
-        //Then use fprintf() to append to the file
-        if (!fptr) {
-            // perror("Error opening or creating file.\n");
-            syslog(LOG_ERR, "Failed fopen()\n");
-        }
 
-        //size_t unsigned, ssize_t signed
-        size_t totalLen = 0;
-        ssize_t numRecvBytes;
+        //---------INSERT THREADING FUNCTIONALITY HERE------------
 
-        //***********************
-        while ((numRecvBytes = recv(connfd, pbuff + totalLen, MAX_PACKET_SIZE - totalLen, 0)) > 0) {
-            totalLen += numRecvBytes;
-
-            if (memchr(pbuff, '\n', totalLen)) { //*********** */
-                break;
-            }
-
-            if (totalLen >= MAX_PACKET_SIZE) {
-                syslog(LOG_ERR, "Discarding oversized packet");
-                totalLen = 0;
-                break;
-            }
-        }
-
-        
-        //******
-        if (numRecvBytes > MAX_PACKET_SIZE) {
-            //Error
-            totalLen = 0;
-            memset(pbuff, 0, MAX_PACKET_SIZE);
+        //Have to malloc b/c using threads
+        int* memConnFd = malloc(sizeof(connfd));
+        if (!memConnFd) {
+            perror("Failed to malloc memConnFd\n"); 
+            syslog(LOG_ERR, "Failed memConnFd malloc\n");
             continue;
         }
+        memset(memConnFd, connfd, sizeof(connfd));
 
-        char* line = NULL;
 
-        //Separate and append each packet (ended w/ '\n') to the file
-        size_t startPacket = 0;
-        for (size_t i = 0; i < numRecvBytes; i++) {
-            if (pbuff[i] == '\n') {
-                size_t packetLen = i - startPacket + 1;
-            
-                fwrite(pbuff + startPacket, 1, packetLen, fptr);
-                startPacket = i + 1;
-
-                fflush(fptr); //Needs to occur before rewind****
-
-                //Need to return full file content to client as soon as received data packet completes
-                //Need to send each line individually I think. Can't load the full file into RAM b/c of constraints.
-                ssize_t lineLength;
-                size_t len = 0;
-                rewind(fptr);
-                while ((lineLength = getline(&line, &len, fptr)) != -1) {
-                    send(connfd, line, lineLength, 0); //-------Need error handling------
-                }
-                
-            }
+        //There is no LL, initialize.
+        if (head == NULL) {
 
         }
 
-        //Freeing temp memory used to store packets
-        free(pbuff);
-        free(outpbuff);
 
-        //Closing per connection since the socket server can service multiple clients in a typical application
-        close(connfd);
+        //Create struct
+        struct thread_data* thread_func_args = (struct thread_data*)malloc(sizeof(struct thread_data));
 
-        //Indicates connfd was closed here so the signal handler won't try to close it again
-        connfd = -1;
+        *thread_func_args = \
+            (struct thread_data){.completeFlag = false, \
+            .fileMutex = fileMutex, \
+            .pbuffPtr = pbuff \
+            .outpbuffPtr = outpbuff \
+            .outLine = NULL, \
+            .socket = memConnFd, \
+            .ipaddrStr = ipv4str};
 
-        //Skip if fopen() fails basically
-        if (fptr) {
-            fclose(fptr);
+
+        //Thread param in pthread_create() should be either tail or head of the linked list
+        //LL inside or outside while loop?
+
+
+        int status = pthread_create(thread, NULL, threadfunc, thread_func_args);
+        if (status != 0) {
+            perror("Failed to create thread");
+            return false;
+        } 
+
+
+
+        //Put loop here checking status of all threads, joining ones complete
+        //Also free data associated with that thread
+        SLIST_FOREACH(data, &head, entries) {
+
         }
+
+
+        //--------------------------------------------------------
+
+
+
+
+
+        //Still free here after pthread_join(), but will be associated with the args
+        //for a specific thread. 
+
+        //I still gotta free the memConnFd as well here
+
+        // //Freeing temp memory used to store packets
+        // free(pbuff);
+        // free(outpbuff);
+
+        // //Indicates connfd was closed here so the signal handler won't try to close it again
+        // connfd = -1;
+
+        // //Skip if fopen() fails basically
+        // if (fptr) {
+        //     fclose(fptr);
+        // }
         
-        //******
-        free(line);
+        // free(line);
 
-        syslog(LOG_INFO, "Closed connection from %s\n", ipv4str);
+        
 
     }
     
