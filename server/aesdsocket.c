@@ -18,9 +18,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "queue.h"
+#include <time.h>
 
 #define MAX_PACKET_SIZE 65536 //Buffer size for recv. Needs to be large enough to handle long-string.txt
 #define TEMP_FILE "/var/tmp/aesdsocketdata"
+#define RFC2822_FORMAT "timestamp:%a, %d %b %Y %T %z\n"
 
 //Globals (These variables are global so they can be used in the signal_hander function to avoid memory leaks)
 int connfd;
@@ -43,9 +45,15 @@ struct thread_data{
     bool completeFlag;
 };
 
+struct timer_thread_data 
+{
+    pthread_mutex_t lock;
+};
+
 typedef struct slist_data_s slist_data_t;
 struct slist_data_s {
     struct thread_data* value;
+    pthread_t* threadPtr;
     SLIST_ENTRY(slist_data_s) entries;
 };
 
@@ -133,6 +141,57 @@ void* threadfunc(void* thread_param) {
     return thread_param;
 }
 
+//For setting timestamps in the file as per the assignment description.
+static void timer_thread ( union sigval sigval )
+{
+
+    char outStr[200];
+    time_t t;
+    struct tm* tmp;
+
+    struct timer_thread_data *td = (struct thread_data*) sigval.sival_ptr;
+    int status = pthread_mutex_lock(&td->lock);
+    if (status != 0) {
+        perror("Obtaining mutex lock failed.");
+        syslog(LOG_ERR, "Obtaining mutex lock failed.");
+
+        //Append timestamp in form "timestamp:time"
+        //'time' format: ********\n
+        //Includes year, month, day, hour, minute, and second representing system wall clock time
+        t= time(NULL);
+        tmp = localtime(&t);
+        if (tmp == NULL) {
+            perror("localtime");
+            //Error************
+        }
+        if (strftime(outStr, sizeof(outStr), RFC2822_FORMAT, tmp) == 0) {
+            fprintf(stderr, "strftime returned 0");
+        }
+
+        fptr = fopen(TEMP_FILE, "a+"); 
+        if (!fptr) {
+            perror("Error opening or creating file.\n");
+            syslog(LOG_ERR, "Failed fopen() in timer thread\n");
+        }
+
+        //Now append to file
+        //Need to find '\n' char to determine size
+        for (size_t i = 0; i < sizeof(outStr); i++) {
+                if (outStr[i] == '\n') {
+                    size_t lineLen = i +  1;
+                    fwrite(outStr, 1, lineLen, fptr);
+                    break;
+                }
+            }
+
+    } 
+    else {
+        if ( pthread_mutex_unlock(&td->lock) != 0 ) {
+            printf("Error %d (%s) unlocking thread data!\n",errno,strerror(errno));
+        }
+    }
+}
+
 
 /*
 * Complete any open connection operations
@@ -184,6 +243,34 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     fclose(fptr);
+
+
+    //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
+    struct thread_data td;
+    struct sigevent sev;
+    bool success = false;
+    timer_t timerid;
+    memset(&td,0,sizeof(struct thread_data));
+
+    //Don't need to initialize mutex because we are using the one for the file
+
+    //Setting up timer to be used for required timestamps in the output file
+    int clock_id = CLOCK_MONOTONIC;
+    memset(&sev, 0, sizeof(struct sigevent));
+    //Setup call to timer_thread passing in td structure as the sigev_value arg
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_value.sival_ptr = &td;
+    sev.sigev_notify_function = timer_thread;
+    if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
+            printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
+        } else {
+            struct timespec sleep_time;
+            
+            sleep_time.tv_sec = 10;
+            sleep_time.tv_nsec = 0;
+
+            //****************NEED TO ADD STUFF HERE*************
+        }
 
 
     //-------------------Signal Setup-----------------------------
@@ -401,6 +488,7 @@ int main(int argc, char *argv[]) {
             //Note that there is an empty first node for init.
             datap = malloc(sizeof(slist_data_t));
             datap->value = thread_func_args;
+            datap->threadPtr = malloc(sizeof(pthread_t));
             SLIST_INSERT_HEAD(&head, datap, entries);
             threadCount++;
         
@@ -410,7 +498,7 @@ int main(int argc, char *argv[]) {
         //LL inside or outside while loop? It's a stack, so head at least.
 
 
-        int status = pthread_create(thread, NULL, threadfunc, thread_func_args);
+        int status = pthread_create(datap->threadPtr, NULL, threadfunc, thread_func_args);
         if (status != 0) {
             perror("Failed to create thread");
             return false;
@@ -420,11 +508,36 @@ int main(int argc, char *argv[]) {
 
         //Put loop here checking status of all threads, joining ones complete
         //Also free data associated with that thread
-        SLIST_FOREACH(datap, &head, entries) {
+        //Reference: Asked Copilot AI for an example of using SLIST_FOREACH_SAFE and SLIST_REMOVE together
+            //Used no references for the joining and freeing of data.
+        struct slist_data_s *currNodePtr, *tmpNodePtr;
+
+        SLIST_FOREACH_SAFE(currNodePtr, &head, entries, tmpNodePtr) {
             //Join thread
             //Free pbuff, outpbuff, etc.
 
-            
+            //Finished, need to join
+            if(datap->value->completeFlag) {
+                pthread_join(datap->threadPtr, NULL);
+
+                //Free data associated with that thread.
+                free(datap->threadPtr);
+                free(datap->value->pbuffPtr);
+                free(datap->value->outpbuffPtr);
+                free(datap->value->outLine);
+
+                //After freeing components, can free thread_func_args
+                free(datap->value);
+
+                //Still need to fclose fptr, 
+                if (fptr) {
+                    fclose(fptr);
+                }
+
+                SLIST_REMOVE(&head, currNodePtr, slist_data_s, entries);
+                free(datap);
+            }
+
         }
 
 
