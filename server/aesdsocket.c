@@ -32,13 +32,6 @@ char* pbuff;
 char* outpbuff;
 
 
-
-typedef struct slist_data_s slist_data_t;
-struct slist_data_s {
-    int value;
-    SLIST_ENTRY(slist_data_s) entries;
-};
-
 struct thread_data{
 
     pthread_mutex_t* fileMutex;
@@ -49,6 +42,13 @@ struct thread_data{
     char* ipaddrStr;
     bool completeFlag;
 };
+
+typedef struct slist_data_s slist_data_t;
+struct slist_data_s {
+    struct thread_data* value;
+    SLIST_ENTRY(slist_data_s) entries;
+};
+
 
 void* threadfunc(void* thread_param) {
 
@@ -336,7 +336,7 @@ int main(int argc, char *argv[]) {
     //---------THREADING------------
 
     pthread_mutex_t* fileMutex;
-    slist_data_t* dataPtr = NULL;
+    slist_data_t* datap = NULL;
     SLIST_HEAD(slisthead, slist_data_s) head;
     SLIST_INIT(&head);
     int threadCount = 0;
@@ -383,11 +383,6 @@ int main(int argc, char *argv[]) {
         memset(memConnFd, connfd, sizeof(connfd));
 
 
-        //There is no LL, initialize.
-        if (head == NULL) {
-
-        }
-
 
         //Create struct
         struct thread_data* thread_func_args = (struct thread_data*)malloc(sizeof(struct thread_data));
@@ -402,8 +397,17 @@ int main(int argc, char *argv[]) {
             .ipaddrStr = ipv4str};
 
 
+            //Add node for thread info to LL
+            //Note that there is an empty first node for init.
+            datap = malloc(sizeof(slist_data_t));
+            datap->value = thread_func_args;
+            SLIST_INSERT_HEAD(&head, datap, entries);
+            threadCount++;
+        
+
+
         //Thread param in pthread_create() should be either tail or head of the linked list
-        //LL inside or outside while loop?
+        //LL inside or outside while loop? It's a stack, so head at least.
 
 
         int status = pthread_create(thread, NULL, threadfunc, thread_func_args);
@@ -416,8 +420,11 @@ int main(int argc, char *argv[]) {
 
         //Put loop here checking status of all threads, joining ones complete
         //Also free data associated with that thread
-        SLIST_FOREACH(data, &head, entries) {
+        SLIST_FOREACH(datap, &head, entries) {
+            //Join thread
+            //Free pbuff, outpbuff, etc.
 
+            
         }
 
 
