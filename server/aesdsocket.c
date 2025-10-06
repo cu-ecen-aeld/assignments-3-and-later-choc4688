@@ -268,7 +268,9 @@ int main(int argc, char *argv[]) {
 
 
 
-
+    struct timer_thread_data td;
+    struct sigevent sev;
+    timer_t timerid;
 
         
 
@@ -403,9 +405,6 @@ int main(int argc, char *argv[]) {
                 //---------------------------------------------------------------
 
                 //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
-                struct timer_thread_data td;
-                struct sigevent sev;
-                timer_t timerid;
                 memset(&td,0,sizeof(struct timer_thread_data));
                 //Don't need to initialize mutex because we are using the one for the file
                 //Setting up timer to be used for required timestamps in the output file
@@ -478,9 +477,6 @@ int main(int argc, char *argv[]) {
 
 
         //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
-        struct timer_thread_data td;
-        struct sigevent sev;
-        timer_t timerid;
         memset(&td,0,sizeof(struct timer_thread_data));
         //Don't need to initialize mutex because we are using the one for the file
         //Setting up timer to be used for required timestamps in the output file
