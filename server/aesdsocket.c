@@ -13,27 +13,18 @@
 #include <signal.h>
 #include <pthread.h>
 #include <stdbool.h>
-
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "queue.h"
 #include <time.h>
-// #include "time_functions_shared.h"
-
+#include "queue.h"
 
 #define MAX_PACKET_SIZE 65536 //Buffer size for recv. Needs to be large enough to handle long-string.txt
 #define TEMP_FILE "/var/tmp/aesdsocketdata"
 #define RFC2822_FORMAT "timestamp:%a, %d %b %Y %T %z\n"
 
-//Globals (These variables are global so they can be used in the signal_hander function to avoid memory leaks)
-// int connfd;
-// int sockfd;
-// FILE* fptr;
-struct addrinfo hints;
-struct addrinfo *servinfo; //Points to results of getaddrinfo() after the function is called.
-// char* pbuff;
-// char* outpbuff;
+//Global flag for signal handling
+bool signalCaughtFlag = false;
 
 
 struct thread_data{
@@ -60,7 +51,23 @@ struct slist_data_s {
 };
 
 
+/*
+* Complete any open connection operations
+* Close any open sockets
+* Delete the file /var/tmp/aesdsocketdata
+*/
+static void signal_handler(int signal_number) { //Static = only visible to other funcs in the same file
+
+    if (signal_number == SIGINT || signal_number == SIGTERM) {
+        syslog(LOG_INFO, "Caught signal, flagging for cleanup\n");
+        signalCaughtFlag = true;
+    }
+}
+
+
 void* threadfunc(void* thread_param) {
+
+    bool threadSuccess = true;
 
     struct thread_data* thread_func_args = (struct thread_data *) thread_param;
 
@@ -84,7 +91,7 @@ void* threadfunc(void* thread_param) {
         memset(thread_func_args->pbuffPtr, 0, MAX_PACKET_SIZE);
         perror("Received more bytes than available in receive buffer.");
         syslog(LOG_ERR, "Received more bytes than available in receive buffer.");
-        pthread_exit(NULL);
+        threadSuccess = false;
     }
     else {
         //---------------------MUTEX LOCK-----------------------
@@ -92,40 +99,49 @@ void* threadfunc(void* thread_param) {
         if (status != 0) {
             perror("Obtaining mutex lock failed.");
             syslog(LOG_ERR, "Obtaining mutex lock failed.");
-            pthread_exit(NULL);
+            threadSuccess = false;
         }
         else {
             FILE* fptr = fopen(TEMP_FILE, "a+"); 
             if (!fptr) {
                 perror("Error opening or creating file.\n");
                 syslog(LOG_ERR, "Failed fopen()\n");
-                pthread_exit(NULL);
+                threadSuccess = false;
             }
-
-            //Separate and append each packet (ended w/ '\n') to the file
-            size_t startPacket = 0;
-            for (size_t i = 0; i < numRecvBytes; i++) {
-                if (thread_func_args->pbuffPtr[i] == '\n') {
-                    size_t packetLen = i - startPacket + 1;
-                    fwrite(thread_func_args->pbuffPtr + startPacket, 1, packetLen, fptr);
-                    startPacket = i + 1;
-                    status = fflush(fptr); //Needs to occur before rewind****
-                    if (status != 0) {
-                        syslog(LOG_ERR, "Failed fflush()\n");
-                        pthread_exit(NULL);
-                    }
-                    //Need to return full file content to client as soon as received data packet completes
-                    //Need to send each line individually. Can't load the full file into RAM b/c of constraints.
-                    ssize_t lineLength;
-                    size_t len = 0;
-                    rewind(fptr); //Returns nothing
-                    while ((lineLength = getline(&thread_func_args->outLine, &len, fptr)) != -1) {
-                        status = send(*thread_func_args->connfd, thread_func_args->outLine, lineLength, 0); 
-                        if (status == -1) {
-                            syslog(LOG_ERR, "Failed send()\n");
-                            pthread_exit(NULL);
+            else {
+                //Separate and append each packet (ended w/ '\n') to the file
+                size_t startPacket = 0;
+                for (size_t i = 0; i < totalLen; i++) {
+                    if (thread_func_args->pbuffPtr[i] == '\n') {
+                        size_t packetLen = i - startPacket + 1;
+                        status = fwrite(thread_func_args->pbuffPtr + startPacket, 1, packetLen, fptr);
+                        if (status == 0) {
+                            perror("Failed fwrite()\n");
+                            syslog(LOG_ERR, "Failed fwrite()\n");
+                            threadSuccess = false;
+                            break;
                         }
-                    } 
+                        startPacket = i + 1;
+                        status = fflush(fptr); //Needs to occur before rewind according to Copilot AI
+                        if (status != 0) {
+                            perror("Failed fflush()\n");
+                            syslog(LOG_ERR, "Failed fflush()\n");
+                            threadSuccess = false;
+                            break;
+                        }
+                        //Need to return full file content to client as soon as received data packet completes
+                        //Need to send each line individually. Can't load the full file into RAM b/c of constraints.
+                        ssize_t lineLength;
+                        size_t len = 0;
+                        rewind(fptr); //Returns nothing
+                        while ((lineLength = getline(&thread_func_args->outLine, &len, fptr)) != -1) {
+                            status = send(*thread_func_args->connfd, thread_func_args->outLine, lineLength, 0); 
+                            if (status == -1) {
+                                syslog(LOG_ERR, "Failed send()\n");
+                                threadSuccess = false;
+                            }
+                        } 
+                    }
                 }
             }
 
@@ -134,13 +150,23 @@ void* threadfunc(void* thread_param) {
             status = pthread_mutex_unlock(thread_func_args->fileMutex);
             if (status != 0) {
                 perror("Releasing mutex lock failed.");
-                pthread_exit(NULL);
+                threadSuccess = false;
             }
+
+
+            if (!threadSuccess) {
+                free(thread_func_args->pbuffPtr);
+                free(thread_func_args->outpbuffPtr);
+                free(thread_func_args->outLine);
+                free(thread_func_args->connfd);
+                free(thread_func_args);
+            }
+
             //------------------END MUTEX LOCK-----------------------
         }
     }
 
-    close(*thread_func_args->connfd); //**********-1 flag ---------------
+    close(*thread_func_args->connfd); 
     syslog(LOG_INFO, "Closed connection from %s\n", thread_func_args->ipaddrStr);
 
     thread_func_args->completeFlag = true;
@@ -206,48 +232,6 @@ static void timer_thread ( union sigval sigval )
 
 
 
-
-
-/*
-* Complete any open connection operations
-* Close any open sockets
-* Delete the file /var/tmp/aesdsocketdata
-*/
-static void signal_handler(int signal_number) { //Static = only visible to other funcs in the same file
-
-    if (signal_number == SIGINT || signal_number == SIGTERM) {
-        syslog(LOG_INFO, "Caught signal, exiting\n");
-
-        freeaddrinfo(servinfo);
-
-        // close(sockfd);
-        
-        // //Check if already closed (closing in the main loop since I have accept() in the main loop)
-        // if (connfd != -1) 
-        //     close(connfd);
-
-        // //Also avoiding double free / double fclose for memory allocated in the main loop
-        // // if (pbuff) 
-        // //     free(pbuff);
-        // // if (outpbuff) 
-        // //     free(outpbuff);
-        // if (fptr) 
-        //     fclose(fptr);
-
-        // free(fileMutex);
-        
-        // //Deletes the specified file
-        // if (remove(TEMP_FILE) != 0) {
-        //     syslog(LOG_ERR, "Was unable to delete the file %s\n", TEMP_FILE);
-        // }
-
-        //Exiting here to ensure all sockets are closed and memory is freed correctly within this function instead of setting a flag variable
-        // to handle this in main().
-        exit(EXIT_SUCCESS);
-    }
-}
-
-
 int main(int argc, char *argv[]) {
 
     //Set up logging since there is a daemon option for this program.
@@ -257,7 +241,7 @@ int main(int argc, char *argv[]) {
     FILE* fptr = fopen(TEMP_FILE, "w");
     if (!fptr) {
         syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
-        exit(EXIT_FAILURE);
+        return -1;
     }
     fclose(fptr);
 
@@ -274,7 +258,8 @@ int main(int argc, char *argv[]) {
     if (status != 0) {
         //Error
         perror("Error initializing fileMutex");
-        exit(1);
+        free(fileMutex);
+        return -1;
     }
 
     slist_data_t* datap = NULL;
@@ -317,8 +302,10 @@ int main(int argc, char *argv[]) {
             //Reference: If statement below from asking Copilot AI "posix interval timer example"
                 //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
             if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
-                perror("timer_settime");
+                perror("Failed timer_settime()");
                 //Error
+                free(fileMutex);
+                return -1;
             }
         }
         
@@ -336,9 +323,13 @@ int main(int argc, char *argv[]) {
     //Registering SIGTERM and SIGINT
     if (sigaction(SIGTERM, &new_action, NULL) != 0 ) {
         syslog(LOG_ERR, "Unable to register SIGTERM in sigaction()\n");
+        free(fileMutex);
+        return -1;
     }
     if (sigaction(SIGINT, &new_action, NULL)) {
         syslog(LOG_ERR, "Unable to register SIGINT in sigaction()\n");
+        free(fileMutex);
+        return -1;
     }
 
     //-------------------Socket Setup-----------------------------
@@ -358,6 +349,9 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    struct addrinfo hints;
+    struct addrinfo *servinfo;
+
     //Setup for getaddrinfo()
     memset(&hints, 0, sizeof(hints)); //Ensures struct is empty
     hints.ai_flags = AI_PASSIVE;
@@ -369,6 +363,7 @@ int main(int argc, char *argv[]) {
     if (status != 0) {
         // perror("Failed to getaddrinfo\n");
         syslog(LOG_ERR, "getaddrinfo() failed\n");
+        free(fileMutex);
         return -1;
     }
 
@@ -379,6 +374,7 @@ int main(int argc, char *argv[]) {
         //  perror("Failed to bind\n");
          syslog(LOG_ERR, "Failed to bind\n");
          freeaddrinfo(servinfo); //Identified single missing free w/ valgrind and AI
+         free(fileMutex);
          return -1;
     }
 
@@ -434,6 +430,14 @@ int main(int argc, char *argv[]) {
                 //-------------------
             }
             else { //Parent Process
+
+                //Need to free all data that was associated with the parent process
+
+
+                freeaddrinfo(servinfo);
+                free(fileMutex);
+
+
                 exit(EXIT_SUCCESS);
             }
         }
@@ -450,28 +454,25 @@ int main(int argc, char *argv[]) {
     //Now listen for connections on the socket
     status = listen(sockfd, 1); //Allows for JUST ONE connection request before refusing the rest*****
     if (status == -1) {
-        //  perror("Failed to listen\n");
+         perror("Failed to listen\n");
          syslog(LOG_ERR, "Failed listen()\n");
     }
 
 
-
-
-
     //Main Connection Loop
     //Runs until SIGINT or SIGTERM are called
-    while(1) {
+    while(!signalCaughtFlag) {
 
         char* pbuff = malloc(MAX_PACKET_SIZE); //For incoming packets
         if (!pbuff) {
-            // perror("Failed to malloc pbuff\n");
+            perror("Failed to malloc pbuff\n");
             syslog(LOG_ERR, "Failed pbuff malloc\n");
             continue; //Try again on the next loop iteration in case the error is recoverable / temporary (Was suggested by Copilot AI for safe memory handling tips)
         }
 
         char* outpbuff = malloc(MAX_PACKET_SIZE); //For outgoing packets
         if (!outpbuff) {
-            // perror("Failed to malloc outpbuff\n"); 
+            perror("Failed to malloc outpbuff\n"); 
             syslog(LOG_ERR, "Failed outpbuff malloc\n");
             continue;
         }
@@ -483,9 +484,11 @@ int main(int argc, char *argv[]) {
 
         int connfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size);
         if (connfd == -1) {
-            // perror("Failed to accept\n");
+            perror("Failed to accept\n");
             syslog(LOG_ERR, "Failed accept()\n");
             freeaddrinfo(servinfo);
+            free(pbuff);
+            free(outpbuff);
             return -1;
         }
 
@@ -513,7 +516,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
         *memConnFd = connfd;
-
 
 
         //Create struct
@@ -546,6 +548,13 @@ int main(int argc, char *argv[]) {
         int status = pthread_create(datap->threadPtr, NULL, threadfunc, thread_func_args);
         if (status != 0) {
             perror("Failed to create thread");
+            free(fileMutex);
+            free(pbuff);
+            free(outpbuff);
+            free(datap);
+            free(datap->threadPtr);
+            free(thread_func_args);
+            free(memConnFd);
             return -1;
         } 
 
@@ -556,14 +565,13 @@ int main(int argc, char *argv[]) {
         //Reference: Asked Copilot AI for an example of using SLIST_FOREACH_SAFE and SLIST_REMOVE together
             //Used no references for the joining and freeing of data.
         struct slist_data_s *currNodePtr, *tmpNodePtr;
-
         SLIST_FOREACH_SAFE(currNodePtr, &head, entries, tmpNodePtr) {
             //Join thread
             //Free pbuff, outpbuff, etc.
 
             //Finished, need to join
             if(currNodePtr->value->completeFlag) {
-                pthread_join(*datap->threadPtr, NULL);
+                pthread_join(*currNodePtr->threadPtr, NULL);
 
                 //Free data associated with that thread.
                 free(currNodePtr->threadPtr);
@@ -575,48 +583,52 @@ int main(int argc, char *argv[]) {
                 //After freeing components, can free thread_func_args
                 free(currNodePtr->value);
 
+                SLIST_REMOVE(&head, currNodePtr, slist_data_s, entries);
+                free(currNodePtr);
+            }
+        }
+    } //End main connection while-loop
+
+
+    //Arrive at this section of code once the signal flag is set and the current
+    // connection loop completes.
+
+    //Busy-wait until all threads finish for 'graceful' exit...?
+    struct slist_data_s *currNodePtr, *tmpNodePtr;
+    while (!SLIST_EMPTY(&head)) {
+        SLIST_FOREACH_SAFE(currNodePtr, &head, entries, tmpNodePtr) {
+            //Join thread
+            //Free pbuff, outpbuff, etc.
+
+            //Finished, need to join
+            if(currNodePtr->value->completeFlag) {
+                pthread_join(*currNodePtr->threadPtr, NULL);
+
+                //Free data associated with that thread.
+                free(currNodePtr->threadPtr);
+                free(currNodePtr->value->pbuffPtr);
+                free(currNodePtr->value->outpbuffPtr);
+                free(currNodePtr->value->outLine);
+                free(currNodePtr->value->connfd); //Earlier malloc'd space for this integer
+
+                //After freeing components, can free thread_func_args
+                free(currNodePtr->value);
 
                 SLIST_REMOVE(&head, currNodePtr, slist_data_s, entries);
                 free(currNodePtr);
             }
-
         }
-
-
-        //--------------------------------------------------------
-
-
-
-
-
-        //Still free here after pthread_join(), but will be associated with the args
-        //for a specific thread. 
-
-        //I still gotta free the memConnFd as well here
-
-        // //Freeing temp memory used to store packets
-        // free(pbuff);
-        // free(outpbuff);
-
-        // //Indicates connfd was closed here so the signal handler won't try to close it again
-        // connfd = -1;
-
-        // //Skip if fopen() fails basically
-        // if (fptr) {
-        //     fclose(fptr);
-        // }
-        
-        // free(line);
-
     }
 
-
     if (timer_delete(timerid) != 0) {
-        printf("Error %d (%s) deleting timer!\n",errno,strerror(errno));
+        perror("Error deleting timer");
         //Error
     }
 
     free(fileMutex);
-    
+    freeaddrinfo(servinfo);
+
+
+
     return 0; 
 }
