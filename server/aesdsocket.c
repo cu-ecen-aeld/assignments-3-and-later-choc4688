@@ -40,7 +40,7 @@ struct thread_data{
 
 struct timer_thread_data 
 {
-    pthread_mutex_t lock;
+    pthread_mutex_t* fileMutex;
 };
 
 typedef struct slist_data_s slist_data_t;
@@ -67,7 +67,7 @@ static void signal_handler(int signal_number) { //Static = only visible to other
 
 void* threadfunc(void* thread_param) {
 
-    bool threadSuccess = true;
+    // bool threadSuccess = true;
 
     struct thread_data* thread_func_args = (struct thread_data *) thread_param;
 
@@ -86,12 +86,14 @@ void* threadfunc(void* thread_param) {
             break;
         }
     }
-    if (numRecvBytes > MAX_PACKET_SIZE) { //Over buffer size error
+    if (totalLen > MAX_PACKET_SIZE) { //Over buffer size error
         totalLen = 0;
         memset(thread_func_args->pbuffPtr, 0, MAX_PACKET_SIZE);
         perror("Received more bytes than available in receive buffer.");
         syslog(LOG_ERR, "Received more bytes than available in receive buffer.");
-        threadSuccess = false;
+    }
+    else if (numRecvBytes == -1 || numRecvBytes == 0) {
+        perror("Error on recv, either closed connection or recv error");
     }
     else {
         //---------------------MUTEX LOCK-----------------------
@@ -99,14 +101,12 @@ void* threadfunc(void* thread_param) {
         if (status != 0) {
             perror("Obtaining mutex lock failed.");
             syslog(LOG_ERR, "Obtaining mutex lock failed.");
-            threadSuccess = false;
         }
         else {
             FILE* fptr = fopen(TEMP_FILE, "a+"); 
             if (!fptr) {
                 perror("Error opening or creating file.\n");
                 syslog(LOG_ERR, "Failed fopen()\n");
-                threadSuccess = false;
             }
             else {
                 //Separate and append each packet (ended w/ '\n') to the file
@@ -118,7 +118,6 @@ void* threadfunc(void* thread_param) {
                         if (status == 0) {
                             perror("Failed fwrite()\n");
                             syslog(LOG_ERR, "Failed fwrite()\n");
-                            threadSuccess = false;
                             break;
                         }
                         startPacket = i + 1;
@@ -126,7 +125,6 @@ void* threadfunc(void* thread_param) {
                         if (status != 0) {
                             perror("Failed fflush()\n");
                             syslog(LOG_ERR, "Failed fflush()\n");
-                            threadSuccess = false;
                             break;
                         }
                         //Need to return full file content to client as soon as received data packet completes
@@ -138,7 +136,6 @@ void* threadfunc(void* thread_param) {
                             status = send(*thread_func_args->connfd, thread_func_args->outLine, lineLength, 0); 
                             if (status == -1) {
                                 syslog(LOG_ERR, "Failed send()\n");
-                                threadSuccess = false;
                             }
                         } 
                     }
@@ -150,17 +147,16 @@ void* threadfunc(void* thread_param) {
             status = pthread_mutex_unlock(thread_func_args->fileMutex);
             if (status != 0) {
                 perror("Releasing mutex lock failed.");
-                threadSuccess = false;
             }
 
 
-            if (!threadSuccess) {
-                free(thread_func_args->pbuffPtr);
-                free(thread_func_args->outpbuffPtr);
-                free(thread_func_args->outLine);
-                free(thread_func_args->connfd);
-                free(thread_func_args);
-            }
+            // if (!threadSuccess) {
+            //     free(thread_func_args->pbuffPtr);
+            //     free(thread_func_args->outpbuffPtr);
+            //     free(thread_func_args->outLine);
+            //     free(thread_func_args->connfd);
+            //     free(thread_func_args);
+            // }
 
             //------------------END MUTEX LOCK-----------------------
         }
@@ -184,7 +180,7 @@ static void timer_thread ( union sigval sigval )
     struct timer_thread_data *td = (struct timer_thread_data*) sigval.sival_ptr;
 
     //---------------------MUTEX LOCK-----------------------
-    int status = pthread_mutex_lock(&td->lock);
+    int status = pthread_mutex_lock(td->fileMutex);
     if (status != 0) {
         perror("Obtaining mutex lock failed.");
         syslog(LOG_ERR, "Obtaining mutex lock failed.");
@@ -223,7 +219,7 @@ static void timer_thread ( union sigval sigval )
         
         fclose(fptr);
 
-        if ( pthread_mutex_unlock(&td->lock) != 0 ) {
+        if ( pthread_mutex_unlock(td->fileMutex) != 0 ) {
             printf("Error %d (%s) unlocking thread data!\n",errno,strerror(errno));
         }
         //------------------END MUTEX LOCK-----------------------
@@ -283,10 +279,12 @@ int main(int argc, char *argv[]) {
     memset(&sev, 0, sizeof(struct sigevent));
     //Setup call to timer_thread passing in td structure as the sigev_value arg
     sev.sigev_notify = SIGEV_THREAD;
-    sev.sigev_value.sival_ptr = &td;
+    
     sev.sigev_notify_function = timer_thread;
 
-    td.lock = *fileMutex;
+    td.fileMutex = fileMutex;
+
+    sev.sigev_value.sival_ptr = &td;
 
     if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
             printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
@@ -528,7 +526,7 @@ int main(int argc, char *argv[]) {
             .outpbuffPtr = outpbuff, \
             .outLine = NULL, \
             .connfd = memConnFd, \
-            .ipaddrStr = ipv4str};
+            .ipaddrStr = strdup(ipv4str)}; //From Copilot AI debugging, needed to prevent stale pointer
 
 
             //Add node for thread info to LL
@@ -631,6 +629,7 @@ int main(int argc, char *argv[]) {
 
     //Deletes the specified file
     if (remove(TEMP_FILE) != 0) {
+        perror("Was unable to delete the file");
         syslog(LOG_ERR, "Was unable to delete the file %s\n", TEMP_FILE);
     }
 
