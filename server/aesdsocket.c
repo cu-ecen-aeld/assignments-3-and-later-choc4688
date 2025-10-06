@@ -233,13 +233,14 @@ int main(int argc, char *argv[]) {
     //Set up logging since there is a daemon option for this program.
     openlog(NULL, LOG_CONS, LOG_USER);
 
-    //Truncating file in case the last run had a kill signal and bypassed handling
-    FILE* fptr = fopen(TEMP_FILE, "w");
-    if (!fptr) {
-        syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
-        return -1;
-    }
-    fclose(fptr);
+    //Moved
+    // //Truncating file in case the last run had a kill signal and bypassed handling
+    // FILE* fptr = fopen(TEMP_FILE, "w");
+    // if (!fptr) {
+    //     syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
+    //     return -1;
+    // }
+    // fclose(fptr);
 
 
     //---------THREADING STUFF------------
@@ -266,25 +267,7 @@ int main(int argc, char *argv[]) {
     //------------------------------
 
 
-    //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
-    struct timer_thread_data td;
-    struct sigevent sev;
-    timer_t timerid;
-    memset(&td,0,sizeof(struct timer_thread_data));
 
-    //Don't need to initialize mutex because we are using the one for the file
-
-    //Setting up timer to be used for required timestamps in the output file
-    int clock_id = CLOCK_MONOTONIC;
-    memset(&sev, 0, sizeof(struct sigevent));
-    //Setup call to timer_thread passing in td structure as the sigev_value arg
-    sev.sigev_notify = SIGEV_THREAD;
-    
-    sev.sigev_notify_function = timer_thread;
-
-    td.fileMutex = fileMutex;
-
-    sev.sigev_value.sival_ptr = &td;
 
 
         
@@ -418,6 +401,22 @@ int main(int argc, char *argv[]) {
 
                 //TIMER HAS TO BE IN THE CHILD PROCESS (learned through a long time of debugging.....)
                 //---------------------------------------------------------------
+
+                //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
+                struct timer_thread_data td;
+                struct sigevent sev;
+                timer_t timerid;
+                memset(&td,0,sizeof(struct timer_thread_data));
+                //Don't need to initialize mutex because we are using the one for the file
+                //Setting up timer to be used for required timestamps in the output file
+                int clock_id = CLOCK_MONOTONIC;
+                memset(&sev, 0, sizeof(struct sigevent));
+                //Setup call to timer_thread passing in td structure as the sigev_value arg
+                sev.sigev_notify = SIGEV_THREAD;
+                sev.sigev_notify_function = timer_thread;
+                td.fileMutex = fileMutex;
+                sev.sigev_value.sival_ptr = &td;
+
                 if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
                     printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
                 } else {
@@ -478,6 +477,21 @@ int main(int argc, char *argv[]) {
         fclose(fptr);
 
 
+        //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
+        struct timer_thread_data td;
+        struct sigevent sev;
+        timer_t timerid;
+        memset(&td,0,sizeof(struct timer_thread_data));
+        //Don't need to initialize mutex because we are using the one for the file
+        //Setting up timer to be used for required timestamps in the output file
+        int clock_id = CLOCK_MONOTONIC;
+        memset(&sev, 0, sizeof(struct sigevent));
+        //Setup call to timer_thread passing in td structure as the sigev_value arg
+        sev.sigev_notify = SIGEV_THREAD;
+        sev.sigev_notify_function = timer_thread;
+        td.fileMutex = fileMutex;
+        sev.sigev_value.sival_ptr = &td;
+        
         if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
             printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
         } else {
