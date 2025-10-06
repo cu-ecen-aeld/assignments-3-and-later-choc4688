@@ -1,9 +1,4 @@
 
-CC ?= gcc
-
-
-
-
 # CXX = $(CROSS_COMPILE)g++
 # AS = $(CROSS_COMPILE)as
 # LD = $(CROSS_COMPILE)ld
