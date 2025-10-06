@@ -286,26 +286,7 @@ int main(int argc, char *argv[]) {
 
     sev.sigev_value.sival_ptr = &td;
 
-    if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
-            printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
-        } else {
-            struct itimerspec sleep_time;
-            
-            sleep_time.it_value.tv_sec = 10;
-            sleep_time.it_value.tv_nsec = 0;
-            sleep_time.it_interval.tv_sec = 10;
-            sleep_time.it_interval.tv_nsec = 0;
 
-            //****************NEED TO ADD STUFF HERE*************
-            //Reference: If statement below from asking Copilot AI "posix interval timer example"
-                //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
-            if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
-                perror("Failed timer_settime()");
-                //Error
-                free(fileMutex);
-                return -1;
-            }
-        }
         
 
 
@@ -421,6 +402,33 @@ int main(int argc, char *argv[]) {
                     close(dev_null_fd);
                 }
 
+
+                //TIMER HAS TO BE IN THE CHILD PROCESS (learned through a long time of debugging.....)
+                //---------------------------------------------------------------
+                if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
+                    printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
+                } else {
+                    struct itimerspec sleep_time;
+                    
+                    sleep_time.it_value.tv_sec = 10;
+                    sleep_time.it_value.tv_nsec = 0;
+                    sleep_time.it_interval.tv_sec = 10;
+                    sleep_time.it_interval.tv_nsec = 0;
+
+                    //****************NEED TO ADD STUFF HERE*************
+                    //Reference: If statement below from asking Copilot AI "posix interval timer example"
+                        //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
+                    if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
+                        perror("Failed timer_settime()");
+                        //Error
+                        free(fileMutex);
+                        return -1;
+                    }
+                }
+                //---------------------------------------------------------------
+
+
+
                 // Close the original file descriptor for /dev/null if it's not one of 0, 1, or 2
                 if (dev_null_fd > STDERR_FILENO) {
                     close(dev_null_fd);
@@ -445,7 +453,28 @@ int main(int argc, char *argv[]) {
     }
     else if (argc > 2) {
         syslog(LOG_ERR, "Invalid number of arguments for %s\n", argv[0]);
-    } //Finished daemon code
+    } else { //Finished daemon code
+        if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
+            printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
+        } else {
+            struct itimerspec sleep_time;
+            
+            sleep_time.it_value.tv_sec = 10;
+            sleep_time.it_value.tv_nsec = 0;
+            sleep_time.it_interval.tv_sec = 10;
+            sleep_time.it_interval.tv_nsec = 0;
+
+            //****************NEED TO ADD STUFF HERE*************
+            //Reference: If statement below from asking Copilot AI "posix interval timer example"
+                //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
+            if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
+                perror("Failed timer_settime()");
+                //Error
+                free(fileMutex);
+                return -1;
+            }
+        }
+    } 
 
 
 
