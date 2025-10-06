@@ -1,4 +1,3 @@
-CC ?= ${CC}
 # CXX = $(CROSS_COMPILE)g++
 # AS = $(CROSS_COMPILE)as
 # LD = $(CROSS_COMPILE)ld
@@ -16,11 +15,13 @@ CC ?= ${CC}
 # CXXFLAGS += -I$(TARGET_INCLUDE)
 # LDFLAGS += -L$(TARGET_LIB)
 
+CC ?= $(CROSS_COMPILE)gcc
 TARGET ?= aesdsocket
 CFLAGS ?= -g -Wall -Werror
 LDFLAGS ?= -lpthread -lrt
 
 aesdsocket: aesdsocket.c
+	@echo "Using compiler: $(CC)"
 	$(CC) $(CFLAGS) $^ -o $@ $(INCLUDES) $(LDFLAGS)
 
 #-g for valgrind output to show specific line numbers
