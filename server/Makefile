@@ -4,7 +4,7 @@ CC ?= $(CROSS_COMPILE)gcc
 
 
 
-CXX = $(CROSS_COMPILE)g++
+# CXX = $(CROSS_COMPILE)g++
 # AS = $(CROSS_COMPILE)as
 # LD = $(CROSS_COMPILE)ld
 
@@ -29,8 +29,8 @@ aesdsocket: aesdsocket.c
 	$(CC) $(CFLAGS) $^ -o $@ $(INCLUDES) $(LDFLAGS)
 
 #-g for valgrind output to show specific line numbers
-all: aesdsocket.c
-	$(CC) aesdsocket.c -o aesdsocket -Wall -Werror
+# all: aesdsocket.c
+# 	$(CC) aesdsocket.c -o aesdsocket -Wall -Werror
 
 clean: 
 	rm -f aesdsocket aesdsocket.o
