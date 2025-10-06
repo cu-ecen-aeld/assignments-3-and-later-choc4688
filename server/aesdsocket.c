@@ -403,6 +403,19 @@ int main(int argc, char *argv[]) {
                 }
 
 
+
+                //---Trying file init here in child daemon mode to see if it fixies file content issue between runs
+                   
+                //Truncating file in case the last run had a kill signal and bypassed handling
+                FILE* fptr = fopen(TEMP_FILE, "w");
+                if (!fptr) {
+                    syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
+                    return -1;
+                }
+                fclose(fptr);
+
+
+
                 //TIMER HAS TO BE IN THE CHILD PROCESS (learned through a long time of debugging.....)
                 //---------------------------------------------------------------
                 if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
@@ -454,6 +467,17 @@ int main(int argc, char *argv[]) {
     else if (argc > 2) {
         syslog(LOG_ERR, "Invalid number of arguments for %s\n", argv[0]);
     } else { //Finished daemon code
+
+
+        //Truncating file in case the last run had a kill signal and bypassed handling
+        FILE* fptr = fopen(TEMP_FILE, "w");
+        if (!fptr) {
+            syslog(LOG_ERR, "Truncating file '%s' failed\n", TEMP_FILE);
+            return -1;
+        }
+        fclose(fptr);
+
+
         if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
             printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
         } else {
