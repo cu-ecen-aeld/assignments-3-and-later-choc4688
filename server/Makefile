@@ -1,7 +1,6 @@
 
-# CC ?= $(CROSS_COMPILE)gcc
-#Yocto error with above, debugging Copilot AI said should be:
-CC ?= ${CC}
+CC ?= $(CROSS_COMPILE)gcc
+
 
 
 

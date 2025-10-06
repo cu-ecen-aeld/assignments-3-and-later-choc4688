@@ -629,6 +629,12 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(servinfo);
 
 
+    //Deletes the specified file
+    if (remove(TEMP_FILE) != 0) {
+        syslog(LOG_ERR, "Was unable to delete the file %s\n", TEMP_FILE);
+    }
+
+
 
     return 0; 
 }
