@@ -120,14 +120,13 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
             retval = -EFAULT;
             goto out;
         }
-        retval += bytesToCopy;
+        numBytesCopied += bytesToCopy;
 
         //Update the f_pos pointer to point to the next offset to read******** (Next entry???)
         //Reference: Copilot AI - Change in the line below, was originally updating the pointer incorrectly
         //Now updates the value pointed to.
         *f_pos += bytesToCopy;
     }
-
     retval = numBytesCopied;
 
     PDEBUG("Finished aesd_read()\n");
