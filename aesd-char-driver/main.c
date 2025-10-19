@@ -68,6 +68,10 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
      * TODO: handle read
      */
 
+    //Casting here to avoid "dereferencing 'void*' pointer" error
+    struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
+
+
     //buf is the buffer to fill for the read from the userspace
     //Can't access buffer directly, have to use copy_to_user()
 
@@ -86,12 +90,12 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
     struct aesd_buffer_entry* foundEntry;
 
-    mutex_lock(filp->private_data->buffMutex);
+    mutex_lock(&dev->buffMutex);
 
     size_t entryOffset; //The found char is stored at this offset after calling the below function:
-    foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(filp->private_data->buffer, *f_pos, &entryOffset);
+    foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
 
-    mutex_unlock(filp->private_data->buffMutex);
+    mutex_unlock(&dev->buffMutex);
 
     
     //Original:
@@ -132,44 +136,48 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     /**
      * TODO: handle write
      */
+    
 
     PDEBUG("Starting aesd_write()\n");
+
+    //Casting here to avoid "dereferencing 'void*' pointer" error
+    struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
 
     int writeContainsNLFlag = 0;
     
     //buf is a user space pointer, can't be directly accessed by kernel code
     //WE ARE READING FROM BUF HERE, CONTAINS THE THING TO WRITE, write to the circBuffer in the struct here
 
-    mutex_lock(filp->private_data->buffMutex);
+    mutex_lock(&dev->buffMutex);
 
-    if (filp->private_data->newEntryFlag) {
+    if (dev->newEntryFlag) {
         //Need to malloc the tempEntry here
-        filp->private_data->tempEntry = kmalloc(sizeof(struct aesd_buffer_entry));
-        if (filp->private_data->tempEntry == NULL) {
+        dev->tempEntry = kmalloc(sizeof(struct aesd_buffer_entry), GFP_KERNEL);
+        if (dev->tempEntry == NULL) {
             retval = -ENOMEM;
             goto out;
         }
 
         //(AI Debugging, added below 2 lines)***************************
-        filp->private_data->tempEntry->size = 0;
-        filp->private_data->tempEntry->buffptr = NULL;
+        dev->tempEntry->size = 0;
+        dev->tempEntry->buffptr = NULL;
 
     }
 
         
     //For the buffer contents within an entry
-    char* entryAppendedPtr = krealloc(filp->private_data->tempEntry->buffptr, filp->private_data->tempEntry->size + count); //+1 for \0****
+    char* entryAppendedPtr = krealloc(dev->tempEntry->buffptr, dev->tempEntry->size + count, GFP_KERNEL); //+1 for \0****
     if (entryAppendedPtr == NULL) {
         retval = -ENOMEM;
         goto out;
     }
-    filp->private_data->tempEntry->buffptr = entryAppendedPtr; //Resizes tempEntry buffptr
+    dev->tempEntry->buffptr = entryAppendedPtr; //Resizes tempEntry buffptr
     
 
 
     //Returns #bytes that could not be copied
     size_t numNotCopied = 0;
-    numNotCopied = copy_from_user(filp->private_data->tempEntry->buffptr + filp->private_data->tempEntry->size, buf, count);
+    numNotCopied = copy_from_user((void*)(dev->tempEntry->buffptr + dev->tempEntry->size), buf, count);
     if (numNotCopied != 0) {
 
         retval = -EFAULT;
@@ -180,19 +188,19 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
 
         //Then check for newline char
-        for (size_t i = filp->private_data->tempEntry->size; i < filp->private_data->tempEntry->size + count; i++) {
-            if (filp->private_data->tempEntry->buffptr[i] == '\n') {
+        for (size_t i = dev->tempEntry->size; i < dev->tempEntry->size + count; i++) {
+            if (dev->tempEntry->buffptr[i] == '\n') {
                 writeContainsNLFlag = 1;
             }
         }
     
-        filp->private_data->tempEntry->size += count;
+        dev->tempEntry->size += count;
 
         //What does memset do? Fills block of mem with specific byte val (good for clearing after allocating)
 
         if (writeContainsNLFlag) {
             //Add entry to the circular buffer
-            const char* overwrittenEntryBuff = aesd_circular_buffer_add_entry(filp->private_data->buffer, filp->private_data->tempEntry);
+            const char* overwrittenEntryBuff = aesd_circular_buffer_add_entry(dev->buffer, dev->tempEntry);
 
             //Should free the overwritten entry 
             if (overwrittenEntryBuff) { //Reference: Debugging with Copilot AI, added check so kfree doesn't try to free 'NULL'
@@ -200,9 +208,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             }
 
             //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
-            kfree(filp->private_data->tempEntry);
+            kfree(dev->tempEntry);
 
-            filp->private_data->newEntryFlag = 1; 
+            dev->newEntryFlag = 1; 
 
         }
     }
@@ -216,7 +224,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     //Negative - error occurred (-ENOMEM, -EFAULT)
 
     out:
-        mutex_unlock(filp->private_data->buffMutex);
+        mutex_unlock(&dev->buffMutex);
         return retval;
 }
 struct file_operations aesd_fops = {
@@ -263,14 +271,14 @@ int aesd_init_module(void)
     //Initialize everything added into the aesd_dev struct
     //Includes the lock
 
-    aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer));
+    aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer), GFP_KERNEL);
     if (aesd_device.buffer == NULL) {
         result = -ENOMEM;
         goto out;
     }
 
     //Reference: Copilot AI Debugging. Originally forgot to include the line below.
-    aesd_circular_buffer_init(&aesd_device.buffer);
+    aesd_circular_buffer_init(aesd_device.buffer);
 
     aesd_device.newEntryFlag = 1; //So the first write starts with the newEntryFlag correctly
     aesd_device.tempEntry = NULL;

@@ -42,7 +42,7 @@ struct aesd_dev
      int newEntryFlag;
 
      //
-     static DEFINE_MUTEX(buffMutex); //Then use mutex_lock() and mutex_unlock()
+     struct mutex buffMutex; //Then use mutex_lock() and mutex_unlock()
 
 
 

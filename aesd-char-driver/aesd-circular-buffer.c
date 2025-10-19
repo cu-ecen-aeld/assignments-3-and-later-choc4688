@@ -76,7 +76,7 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
 
-    char* retVal = NULL;
+    const char* retVal = NULL;
 
     if (buffer->full) {
         retVal = buffer->entry[buffer->in_offs].buffptr; //Should be the val of buffptr for the entry which will be replaced
