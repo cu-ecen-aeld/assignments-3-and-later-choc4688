@@ -162,6 +162,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         dev->tempEntry->size = 0;
         dev->tempEntry->buffptr = NULL;
 
+        //Reset flag
+        dev->newEntryFlag = 0;
     }
 
         
@@ -196,6 +198,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     
         dev->tempEntry->size += count;
 
+        char debugString[dev->tempEntry->size + 1];
+        memcpy(debugString, dev->tempEntry->buffptr, dev->tempEntry->size);
+        debugString[dev->tempEntry->size] = '\0';
+        PDEBUG("TempEntry contents: %s\n", debugString);
+
         //What does memset do? Fills block of mem with specific byte val (good for clearing after allocating)
 
         if (writeContainsNLFlag) {
@@ -211,6 +218,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             kfree(dev->tempEntry);
 
             dev->newEntryFlag = 1; 
+            dev->tempEntry = NULL;
 
         }
     }

@@ -527,7 +527,7 @@ int main(int argc, char *argv[]) {
 
 
     //Now listen for connections on the socket
-    status = listen(sockfd, 1); //Allows for JUST ONE connection request before refusing the rest*****
+    status = listen(sockfd, 10); 
     if (status == -1) {
          perror("Failed to listen\n");
          syslog(LOG_ERR, "Failed listen()\n");
@@ -561,7 +561,7 @@ int main(int argc, char *argv[]) {
         if (connfd == -1) {
             perror("Failed to accept\n");
             syslog(LOG_ERR, "Failed accept()\n");
-            freeaddrinfo(servinfo);
+            // freeaddrinfo(servinfo);
             free(pbuff);
             free(outpbuff);
             return -1;
