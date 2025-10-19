@@ -99,7 +99,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
         foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
         if (!foundEntry || entryOffset >= foundEntry->size) {
-            breakl
+            break;
         }
 
         //Original:
@@ -116,11 +116,11 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         //count being larger than the number of available bytes.
         size_t bytesAvailable = foundEntry->size - entryOffset;
         size_t bytesToCopy = min(count, bytesAvailable);
-        if (copy_to_user(buf, foundEntry->buffptr + entryOffset, bytesToCopy)) {
+        if (copy_to_user(buf + numBytesCopied, foundEntry->buffptr + entryOffset, bytesToCopy)) {
             retval = -EFAULT;
             goto out;
         }
-        retval = bytesToCopy;
+        retval += bytesToCopy;
 
         //Update the f_pos pointer to point to the next offset to read******** (Next entry???)
         //Reference: Copilot AI - Change in the line below, was originally updating the pointer incorrectly
