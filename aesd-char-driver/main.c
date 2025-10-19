@@ -214,8 +214,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 kfree(overwrittenEntryBuff);
             }
 
-            //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
-            kfree(dev->tempEntry);
+            // //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
+            // kfree(dev->tempEntry); *********************
 
             dev->newEntryFlag = 1; 
             dev->tempEntry = NULL;
