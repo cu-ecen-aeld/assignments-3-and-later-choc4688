@@ -89,43 +89,52 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     PDEBUG("Starting aesd_read()\n");
 
     struct aesd_buffer_entry* foundEntry;
+    size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
+    size_t numBytesCopied = 0;
 
     mutex_lock(&dev->buffMutex);
 
-    size_t entryOffset; //The found char is stored at this offset after calling the below function:
-    foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
-
-    mutex_unlock(&dev->buffMutex);
-
-    
-    //Original:
-    // //Returns #bytes that could not be copied
-    // size_t numNotCopied = 0;
-    // numNotCopied = copy_to_user(buf, foundEntry.buffptr, count); //*****Put full entry in buf or just the contents?
-    // if (numNotCopied != 0) {
-    //     retval = -EFAULT; 
-    //     //Not all bytes written, may retry IN USER SPACE
-    // }
-    // retval = count - numNotCopied;
-
-    //Reference: Copilot AI assistance in modification of the above code to catch the case of 
-    //count being larger than the number of available bytes.
-    size_t bytesAvailable = foundEntry->size - entryOffset;
-    size_t bytesToCopy = min(count, bytesAvailable);
-    if (copy_to_user(buf, foundEntry->buffptr + entryOffset, bytesToCopy))
-        return -EFAULT;
-
-    retval = bytesToCopy;
+    while (numBytesCopied < count) {
 
 
-    //Update the f_pos pointer to point to the next offset to read******** (Next entry???)
-    //Reference: Copilot AI - Change in the line below, was originally updating the pointer incorrectly
-    //Now updates the value pointed to.
-    *f_pos += retval;
+        foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
+        if (!foundEntry || entryOffset >= foundEntry->size) {
+            breakl
+        }
+
+        //Original:
+        // //Returns #bytes that could not be copied
+        // size_t numNotCopied = 0;
+        // numNotCopied = copy_to_user(buf, foundEntry.buffptr, count); //*****Put full entry in buf or just the contents?
+        // if (numNotCopied != 0) {
+        //     retval = -EFAULT; 
+        //     //Not all bytes written, may retry IN USER SPACE
+        // }
+        // retval = count - numNotCopied;
+
+        //Reference: Copilot AI assistance in modification of the above code to catch the case of 
+        //count being larger than the number of available bytes.
+        size_t bytesAvailable = foundEntry->size - entryOffset;
+        size_t bytesToCopy = min(count, bytesAvailable);
+        if (copy_to_user(buf, foundEntry->buffptr + entryOffset, bytesToCopy)) {
+            retval = -EFAULT;
+            goto out;
+        }
+        retval = bytesToCopy;
+
+        //Update the f_pos pointer to point to the next offset to read******** (Next entry???)
+        //Reference: Copilot AI - Change in the line below, was originally updating the pointer incorrectly
+        //Now updates the value pointed to.
+        *f_pos += bytesToCopy;
+    }
+
+    retval = numBytesCopied;
 
     PDEBUG("Finished aesd_read()\n");
 
-    return retval;
+    out:
+        mutex_unlock(&dev->buffMutex);
+        return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
@@ -213,9 +222,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             if (overwrittenEntryBuff) { //Reference: Debugging with Copilot AI, added check so kfree doesn't try to free 'NULL'
                 kfree(overwrittenEntryBuff);
             }
+            else {
+                retval = -ENOMEM;
+            }
 
-            // //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
-            // kfree(dev->tempEntry); *********************
+            //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
+            kfree(dev->tempEntry);
 
             dev->newEntryFlag = 1; 
             dev->tempEntry = NULL;
