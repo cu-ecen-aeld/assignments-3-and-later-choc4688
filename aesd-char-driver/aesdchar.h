@@ -15,6 +15,7 @@
 #  ifdef __KERNEL__
      /* This one if debugging is on, and kernel space */
 #    define PDEBUG(fmt, args...) printk( KERN_DEBUG "aesdchar: " fmt, ## args)
+     #include <linux/mutex.h>
 #  else
      /* This one for user space */
 #    define PDEBUG(fmt, args...) fprintf(stderr, fmt, ## args)
@@ -28,7 +29,25 @@ struct aesd_dev
     /**
      * TODO: Add structure(s) and locks needed to complete assignment requirements
      */
-    struct cdev cdev;     /* Char device structure      */
+
+
+     //Add circular buffer structure/code here
+     //Add working aesd_buffer_entry value (for writes before \n)
+     //Potentially add locking primitive
+
+     struct aesd_circular_buffer *buffer;
+
+     struct aesd_buffer_entry *tempEntry;
+
+     int newEntryFlag;
+
+     //
+     static DEFINE_MUTEX(buffMutex); //Then use mutex_lock() and mutex_unlock()
+
+
+
+
+     struct cdev cdev;     /* Char device structure      */
 };
 
 
