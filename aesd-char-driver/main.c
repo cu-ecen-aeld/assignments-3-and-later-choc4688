@@ -221,9 +221,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             if (overwrittenEntryBuff) { //Reference: Debugging with Copilot AI, added check so kfree doesn't try to free 'NULL'
                 kfree(overwrittenEntryBuff);
             }
-            else {
-                retval = -ENOMEM;
-            }
 
             //Since tempEntry contents get copied into the circular buffer, can now free tempEntry
             kfree(dev->tempEntry);
