@@ -125,6 +125,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     //Need to resize tempEntry buffptr when partial writes occur
     char* entryAppendedPtr = krealloc(dev->tempEntry->buffptr, dev->tempEntry->size + count, GFP_KERNEL); 
+    if (entryAppendedPtr == NULL) {
         retval = -ENOMEM;
         goto out;
     }
