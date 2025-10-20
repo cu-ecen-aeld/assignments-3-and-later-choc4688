@@ -63,27 +63,37 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
     //Casting here to avoid "dereferencing 'void*' pointer" error
     struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
+
     struct aesd_buffer_entry* foundEntry;
-    size_t entryOffset; //The found char is stored at this offset after calling the below function:
+    size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
+    size_t numBytesCopied = 0;
 
     mutex_lock(&dev->buffMutex);
-    foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
-    mutex_unlock(&dev->buffMutex);
 
-    //Reference: Copilot AI assistance in modification of my original code to now catch the case of 
-    //count being larger than the number of available bytes.
-    size_t bytesAvailable = foundEntry->size - entryOffset;
-    size_t bytesToCopy = min(count, bytesAvailable);
-    if (copy_to_user(buf, foundEntry->buffptr + entryOffset, bytesToCopy))
-        return -EFAULT;
-
-    retval = bytesToCopy;
-    //Reference: Caught errors and modified line below while debugging with Copilot AI
-    *f_pos += retval;
+    //Reference: Used Copilot AI for debugging to determine why my original code passed natively but not in QEMU.
+    //Identified differences in Busybox implementation and native implementation. Used for assistance in modification 
+    //of my code to now loop through all necessary entries instead of handling one buffer entry read per function call. 
+    while (numBytesCopied < count) {
+        foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
+        if (!foundEntry || entryOffset >= foundEntry->size) {
+            break;
+        }
+        size_t bytesAvailable = foundEntry->size - entryOffset;
+        size_t bytesToCopy = min(count, bytesAvailable);
+        if (copy_to_user(buf + numBytesCopied, foundEntry->buffptr + entryOffset, bytesToCopy)) {
+            retval = -EFAULT;
+            goto out;
+        }
+        numBytesCopied += bytesToCopy;
+        *f_pos += bytesToCopy;
+    }
+    retval = numBytesCopied;
 
     PDEBUG("Finished aesd_read()\n");
 
-    return retval;
+    out:
+        mutex_unlock(&dev->buffMutex);
+        return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
@@ -105,7 +115,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             retval = -ENOMEM;
             goto out;
         }
-        //Reference: Added the below 2 lines while debugging with Copilot AI
+        //Reference: Added the below 2 lines while debugging with Copilot AI to reset tempEntry.
         dev->tempEntry->size = 0;
         dev->tempEntry->buffptr = NULL;
 
@@ -113,10 +123,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         dev->newEntryFlag = 0;
     }
 
-        
     //Need to resize tempEntry buffptr when partial writes occur
-    char* entryAppendedPtr = krealloc(dev->tempEntry->buffptr, dev->tempEntry->size + count, GFP_KERNEL); //+1 for \0****
-    if (entryAppendedPtr == NULL) {
+    char* entryAppendedPtr = krealloc(dev->tempEntry->buffptr, dev->tempEntry->size + count, GFP_KERNEL); 
         retval = -ENOMEM;
         goto out;
     }
