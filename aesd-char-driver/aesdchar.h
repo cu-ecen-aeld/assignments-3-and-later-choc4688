@@ -26,14 +26,6 @@
 
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
-
-
-     //Add circular buffer structure/code here
-     //Add working aesd_buffer_entry value (for writes before \n)
-     //Potentially add locking primitive
 
      struct aesd_circular_buffer *buffer;
 
@@ -41,11 +33,7 @@ struct aesd_dev
 
      int newEntryFlag;
 
-     //
      struct mutex buffMutex; //Then use mutex_lock() and mutex_unlock()
-
-
-
 
      struct cdev cdev;     /* Char device structure      */
 };
