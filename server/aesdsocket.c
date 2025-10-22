@@ -19,8 +19,16 @@
 #include <time.h>
 #include "queue.h"
 
+#define USE_AESD_CHAR_DEVICE 1
+#ifdef USE_AESD_CHAR_DEVICE
+    #define TEMP_FILE "/dev/aesdchar"
+    #define USE_TIMESTAMP false
+#else
+    #define TEMP_FILE "/var/tmp/aesdsocketdata"
+    #define USE_TIMESTAMP true
+#endif
+
 #define MAX_PACKET_SIZE 65536 //Buffer size for recv. Needs to be large enough to handle long-string.txt
-#define TEMP_FILE "/var/tmp/aesdsocketdata"
 #define RFC2822_FORMAT "timestamp:%a, %d %b %Y %T %z\n"
 
 //Global flag for signal handling
@@ -404,38 +412,42 @@ int main(int argc, char *argv[]) {
                 //TIMER HAS TO BE IN THE CHILD PROCESS (learned through a long time of debugging.....)
                 //---------------------------------------------------------------
 
-                //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
-                memset(&td,0,sizeof(struct timer_thread_data));
-                //Don't need to initialize mutex because we are using the one for the file
-                //Setting up timer to be used for required timestamps in the output file
-                int clock_id = CLOCK_MONOTONIC;
-                memset(&sev, 0, sizeof(struct sigevent));
-                //Setup call to timer_thread passing in td structure as the sigev_value arg
-                sev.sigev_notify = SIGEV_THREAD;
-                sev.sigev_notify_function = timer_thread;
-                td.fileMutex = fileMutex;
-                sev.sigev_value.sival_ptr = &td;
+                if (USE_TIMESTAMP) {
+                        
+                    //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
+                    memset(&td,0,sizeof(struct timer_thread_data));
+                    //Don't need to initialize mutex because we are using the one for the file
+                    //Setting up timer to be used for required timestamps in the output file
+                    int clock_id = CLOCK_MONOTONIC;
+                    memset(&sev, 0, sizeof(struct sigevent));
+                    //Setup call to timer_thread passing in td structure as the sigev_value arg
+                    sev.sigev_notify = SIGEV_THREAD;
+                    sev.sigev_notify_function = timer_thread;
+                    td.fileMutex = fileMutex;
+                    sev.sigev_value.sival_ptr = &td;
 
-                if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
-                    printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
-                } else {
-                    struct itimerspec sleep_time;
-                    
-                    sleep_time.it_value.tv_sec = 10;
-                    sleep_time.it_value.tv_nsec = 0;
-                    sleep_time.it_interval.tv_sec = 10;
-                    sleep_time.it_interval.tv_nsec = 0;
+                    if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
+                        printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
+                    } else {
+                        struct itimerspec sleep_time;
+                        
+                        sleep_time.it_value.tv_sec = 10;
+                        sleep_time.it_value.tv_nsec = 0;
+                        sleep_time.it_interval.tv_sec = 10;
+                        sleep_time.it_interval.tv_nsec = 0;
 
-                    //****************NEED TO ADD STUFF HERE*************
-                    //Reference: If statement below from asking Copilot AI "posix interval timer example"
-                        //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
-                    if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
-                        perror("Failed timer_settime()");
-                        //Error
-                        free(fileMutex);
-                        return -1;
+                        //****************NEED TO ADD STUFF HERE*************
+                        //Reference: If statement below from asking Copilot AI "posix interval timer example"
+                            //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
+                        if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
+                            perror("Failed timer_settime()");
+                            //Error
+                            free(fileMutex);
+                            return -1;
+                        }
                     }
                 }
+
                 //---------------------------------------------------------------
 
 
@@ -475,45 +487,47 @@ int main(int argc, char *argv[]) {
         }
         fclose(fptr);
 
-
-        //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
-        memset(&td,0,sizeof(struct timer_thread_data));
-        //Don't need to initialize mutex because we are using the one for the file
-        //Setting up timer to be used for required timestamps in the output file
-        int clock_id = CLOCK_MONOTONIC;
-        memset(&sev, 0, sizeof(struct sigevent));
-        //Setup call to timer_thread passing in td structure as the sigev_value arg
-        sev.sigev_notify = SIGEV_THREAD;
-        sev.sigev_notify_function = timer_thread;
-        td.fileMutex = fileMutex;
-        sev.sigev_value.sival_ptr = &td;
-        
-        if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
-            printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
-        } else {
-            struct itimerspec sleep_time;
+        if (USE_TIMESTAMP) {
+            //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
+            memset(&td,0,sizeof(struct timer_thread_data));
+            //Don't need to initialize mutex because we are using the one for the file
+            //Setting up timer to be used for required timestamps in the output file
+            int clock_id = CLOCK_MONOTONIC;
+            memset(&sev, 0, sizeof(struct sigevent));
+            //Setup call to timer_thread passing in td structure as the sigev_value arg
+            sev.sigev_notify = SIGEV_THREAD;
+            sev.sigev_notify_function = timer_thread;
+            td.fileMutex = fileMutex;
+            sev.sigev_value.sival_ptr = &td;
             
-            sleep_time.it_value.tv_sec = 10;
-            sleep_time.it_value.tv_nsec = 0;
-            sleep_time.it_interval.tv_sec = 10;
-            sleep_time.it_interval.tv_nsec = 0;
+            if ( timer_create(clock_id,&sev,&timerid) != 0 ) {
+                printf("Error %d (%s) creating timer!\n",errno,strerror(errno));
+            } else {
+                struct itimerspec sleep_time;
+                
+                sleep_time.it_value.tv_sec = 10;
+                sleep_time.it_value.tv_nsec = 0;
+                sleep_time.it_interval.tv_sec = 10;
+                sleep_time.it_interval.tv_nsec = 0;
 
-            //****************NEED TO ADD STUFF HERE*************
-            //Reference: If statement below from asking Copilot AI "posix interval timer example"
-                //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
-            if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
-                perror("Failed timer_settime()");
-                //Error
-                free(fileMutex);
-                return -1;
+                //****************NEED TO ADD STUFF HERE*************
+                //Reference: If statement below from asking Copilot AI "posix interval timer example"
+                    //Also had to change timespec sleep_time to itimerspec to work with POSIX timer
+                if (timer_settime(timerid, 0, &sleep_time, NULL) == -1) {
+                    perror("Failed timer_settime()");
+                    //Error
+                    free(fileMutex);
+                    return -1;
+                }
             }
         }
+        
     } 
 
 
 
     //Now listen for connections on the socket
-    status = listen(sockfd, 1); //Allows for JUST ONE connection request before refusing the rest*****
+    status = listen(sockfd, 10); 
     if (status == -1) {
          perror("Failed to listen\n");
          syslog(LOG_ERR, "Failed listen()\n");
@@ -547,7 +561,7 @@ int main(int argc, char *argv[]) {
         if (connfd == -1) {
             perror("Failed to accept\n");
             syslog(LOG_ERR, "Failed accept()\n");
-            freeaddrinfo(servinfo);
+            // freeaddrinfo(servinfo);
             free(pbuff);
             free(outpbuff);
             return -1;
@@ -690,13 +704,13 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(servinfo);
 
 
-    //Deletes the specified file
-    if (remove(TEMP_FILE) != 0) {
-        perror("Was unable to delete the file");
-        syslog(LOG_ERR, "Was unable to delete the file %s\n", TEMP_FILE);
+    if (!USE_AESD_CHAR_DEVICE) {
+        //Deletes the specified file
+        if (remove(TEMP_FILE) != 0) {
+            perror("Was unable to delete the file");
+            syslog(LOG_ERR, "Was unable to delete the file %s\n", TEMP_FILE);
+        }
     }
-
-
 
     return 0; 
 }
