@@ -21,6 +21,7 @@
 #include "aesd-circular-buffer.h"
 
 #include <linux/string.h>
+#include "aesd_ioctl.h"
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -179,10 +180,117 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         return retval;
 }
 
+
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
+
+	struct scull_dev *dev = filp->private_data;
+	loff_t newpos;
+
+	switch(whence) {
+	  case 0: /* SEEK_SET */
+		newpos = off;
+		break;
+
+	  case 1: /* SEEK_CUR */
+		newpos = filp->f_pos + off;
+		break;
+
+	  case 2: /* SEEK_END */
+		newpos = dev->size + off;
+		break;
+
+	  default: /* can't happen */
+		return -EINVAL;
+	}
+	if (newpos < 0) return -EINVAL;
+	filp->f_pos = newpos;
+	return newpos;
+
+}
+
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+
+
+    int err = 0, tmp;
+	int retval = 0;
+    
+	/*
+	 * extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+	 */
+	if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) return -ENOTTY;
+
+	/*
+	 * the direction is a bitmask, and VERIFY_WRITE catches R/W
+	 * transfers. `Type' is user-oriented, while
+	 * access_ok is kernel-oriented, so the concept of "read" and
+	 * "write" is reversed
+	 */
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok_wrapper(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok_wrapper(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+	if (err) return -EFAULT;
+
+
+    switch(cmd) {
+
+        case AESDCHAR_IOCSEEKTO:
+            
+            //'arg' contains struct aesd_seekto, prob have to cast
+            //Extract the write_cmd and write_cmd_offset
+            //Need to translate into appropriate offset w/in circ buff based on 
+            //current location of the output index
+
+
+            //The 2 params will seek to the appropriate place and update the
+            //file pointer (prob fpos) as described in seek details w/in prev step
+
+
+            //If the 2 params out of range, return -EINVAL
+
+
+            //So basically what ioctl is doing here is updating fpos
+
+
+            uint32_t write_cmd = (struct aesd_seekto)arg.write_cmd;
+            uint32_t write_cmd_offset = (struct aesd_seekto)arg.write_cmd_offset;
+
+            //Translate into offset w/in circular buffer
+
+            struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
+            struct aesd_buffer_entry* foundEntry;
+            size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
+            
+            foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &entryOffset);
+
+            if (foundEntry == NULL || (size_t)write_cmd_offset > foundEntry->size) {
+                retval = -EINVAL;
+                break;
+            }
+            
+            //Update filp->f_pos to the pointer w/in the buffer entry at the offset
+            filp->f_pos = foundEntry->buffptr + entryOffset;
+
+            retval = foundEntry->buffptr + entryOffset; 
+
+            break;
+
+        default:
+            return -ENOTTY;
+    }
+
+    return retval;
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
+    .llseek =   aesd_llseek,
     .read =     aesd_read,
     .write =    aesd_write,
+    .unlocked_ioctl = aesd_ioctl,
     .open =     aesd_open,
     .release =  aesd_release,
 };

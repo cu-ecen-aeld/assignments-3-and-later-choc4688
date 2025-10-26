@@ -19,6 +19,9 @@
 #include <time.h>
 #include "queue.h"
 
+#include <sys/ioctl.h>
+#include "aesd_ioctl.h"
+
 #define USE_AESD_CHAR_DEVICE 1
 #ifdef USE_AESD_CHAR_DEVICE
     #define TEMP_FILE "/dev/aesdchar"
@@ -122,24 +125,58 @@ void* threadfunc(void* thread_param) {
                 for (size_t i = 0; i < totalLen; i++) {
                     if (thread_func_args->pbuffPtr[i] == '\n') {
                         size_t packetLen = i - startPacket + 1;
-                        status = fwrite(thread_func_args->pbuffPtr + startPacket, 1, packetLen, fptr);
-                        if (status == 0) {
-                            perror("Failed fwrite()\n");
-                            syslog(LOG_ERR, "Failed fwrite()\n");
-                            break;
+
+                        //Add IOCSEEKTO handling here
+                        //Send the X and Y vals to the driver ioctl
+
+                        char temp[100];
+                        strncpy(temp, thread_func_args->pbuffPtr + startPacket, packetLen);
+
+                        //strstr to check for substring
+                        if (strstr(temp, "AESDCHAR_IOCSEEKTO:")) {
+
+                            //Extract X and Y values
+                            int xVal = stoi(strtok(temp, ","));
+                            int yVal = stoi(strtok(temp, ","));
+
+                            //Send X&Y to AESDCHAR_IOCSEEKTO ioctl function in driver
+
+                            struct aesd_seekto args = {xVal, yVal};
+
+                            status = ioctl(fptr, 1, args);
+                            if (status != 0) {
+                                perror("Failed ioctl()\n");
+                                syslog(LOG_ERR, "Failed ioctl()\n");
+                            }
+
+                            //Ensure the read of the file and return over the socket
+                            //uses the same fd used to send ioctl and is not closed and re-opened
                         }
-                        startPacket = i + 1;
-                        status = fflush(fptr); //Needs to occur before rewind according to Copilot AI
-                        if (status != 0) {
-                            perror("Failed fflush()\n");
-                            syslog(LOG_ERR, "Failed fflush()\n");
-                            break;
+                        else {
+
+                            status = fwrite(thread_func_args->pbuffPtr + startPacket, 1, packetLen, fptr);
+                            if (status == 0) {
+                                perror("Failed fwrite()\n");
+                                syslog(LOG_ERR, "Failed fwrite()\n");
+                                break;
+                            }
+                            startPacket = i + 1;
+
+                            //May need to move location********************
+                            status = fflush(fptr); //Needs to occur before rewind according to Copilot AI
+                            if (status != 0) {
+                                perror("Failed fflush()\n");
+                                syslog(LOG_ERR, "Failed fflush()\n");
+                                break;
+                            }
+                            rewind(fptr); //Returns nothing
                         }
+
                         //Need to return full file content to client as soon as received data packet completes
                         //Need to send each line individually. Can't load the full file into RAM b/c of constraints.
                         ssize_t lineLength;
                         size_t len = 0;
-                        rewind(fptr); //Returns nothing
+                        
                         while ((lineLength = getline(&thread_func_args->outLine, &len, fptr)) != -1) {
                             status = send(*thread_func_args->connfd, thread_func_args->outLine, lineLength, 0); 
                             if (status == -1) {
