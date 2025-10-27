@@ -32,6 +32,18 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
+//Reference: Asked ChatGPT for a helper function as my circular buffer kept the same contents between runs
+static bool bufferCleared = false;
+void clear_circular_buffer(void)
+{
+    for (int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
+        kfree(aesd_device.buffer->entry[i].buffptr);  // Free each buffer entry
+        aesd_device.buffer->entry[i].buffptr = NULL;   // Null out the pointer
+        aesd_device.buffer->entry[i].size = 0;         // Reset the size
+    }
+}
+
+
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
@@ -43,6 +55,12 @@ int aesd_open(struct inode *inode, struct file *filp)
     filp->private_data = dev;
 
     PDEBUG("Finished aesd_open()\n");
+
+    if (!bufferCleared) {
+        clear_circular_buffer();
+        bufferCleared = true;
+    }
+    
 
     return 0; //Success
 }
@@ -70,6 +88,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
     size_t numBytesCopied = 0;
 
+    printk("Read: fpos at %lld\n", *f_pos);
+
     mutex_lock(&dev->buffMutex);
 
     //Reference: Used Copilot AI for debugging to determine why my original code passed natively but not in QEMU.
@@ -81,7 +101,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
             break;
         }
         size_t bytesAvailable = foundEntry->size - entryOffset;
-        size_t bytesToCopy = min(count, bytesAvailable);
+        size_t bytesToCopy = min(count - numBytesCopied, bytesAvailable);
         if (copy_to_user(buf + numBytesCopied, foundEntry->buffptr + entryOffset, bytesToCopy)) {
             retval = -EFAULT;
             goto out;
@@ -187,6 +207,8 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
 	struct aesd_dev *dev = filp->private_data;
 	loff_t newpos;
 
+    mutex_lock(&dev->buffMutex);
+
 	switch(whence) {
 	  case 0: /* SEEK_SET */
 		newpos = off;
@@ -199,7 +221,7 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
 	  case 2: /* SEEK_END */
 
         //Need to obtain end pointer
-        //Should be zero-referenced, so if all entries were contiguous
+        //Should be zero-referenced
 
 
         //Starting point at buffer->out_offs
@@ -207,31 +229,49 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
         int entryOffset = dev->buffer->out_offs;
         int numEntriesChecked = 0; //Want to stop if all entries have been checked
 
+        printk("Before loop of llseek");
+
         //Stops when all entries have been checked and tempFpos contains end
         while (numEntriesChecked < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
 
-            numEntriesChecked++;
-            entryOffset++;
-
             tempFpos += dev->buffer->entry[entryOffset].size;
 
-            // //Stop if reached end of non-full buffer. Reference: Copilot AI debugging
-            // if (!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
-            //     newpos = dev->buffer->entry[entryOffset].buffptr + dev->buffer->entry[entryOffset].size + off;
-            //     break;
-            // }
+            numEntriesChecked++;
+            entryOffset++;
+            if (entryOffset >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+                entryOffset = 0;
+            }
 
 
-            
+            if(!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
+                tempFpos += dev->buffer->entry[entryOffset].size; //***** */
+                break;
+            }
         }
-        newpos = tempFpos;
+
+        //tempFpos now contains the size of the circular buffer / last byte count
+        newpos = tempFpos + off;
+
+        //Reference: Copilot AI for the check below - I missed originally
+        if (newpos < 0 || newpos > tempFpos) {
+            mutex_unlock(&dev->buffMutex);
+            return -EINVAL; //EINVAL means invalid argument
+        }
+
 
 		break;
 
 	  default: /* can't happen */
+        mutex_unlock(&dev->buffMutex);
 		return -EINVAL;
 	}
-	if (newpos < 0) return -EINVAL;
+	if (newpos < 0) {
+        mutex_unlock(&dev->buffMutex);
+        return -EINVAL;
+    } 
+
+
+    mutex_unlock(&dev->buffMutex);
 	filp->f_pos = newpos;
 	return newpos;
 
@@ -268,20 +308,6 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 
         case AESDCHAR_IOCSEEKTO:
             
-            //'arg' contains struct aesd_seekto, prob have to cast
-            //Extract the write_cmd and write_cmd_offset
-            //Need to translate into appropriate offset w/in circ buff based on 
-            //current location of the output index
-
-
-            //The 2 params will seek to the appropriate place and update the
-            //file pointer (prob fpos) as described in seek details w/in prev step
-
-
-            //If the 2 params out of range, return -EINVAL
-
-
-            //So basically what ioctl is doing here is updating fpos
             struct aesd_seekto temp;
 
             int status = copy_from_user(&temp, (const void __user*)arg, sizeof(temp));
@@ -292,26 +318,10 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             uint32_t write_cmd = temp.write_cmd;
             uint32_t write_cmd_offset = temp.write_cmd_offset;
 
-            //Translate into offset w/in circular buffer
-
-            // struct aesd_dev *dev = (struct aesd_dev*)filp->private_data;
-            // struct aesd_buffer_entry* foundEntry;
-            // size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
-            
-            // foundEntry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *********, &entryOffset);
-
-            // if (foundEntry == NULL || (size_t)write_cmd_offset > foundEntry->size) {
-            //     retval = -EINVAL;
-            //     break;
-            // }
+            printk("Ioctl: write_cmd as %d\n", write_cmd);
+            printk("Ioctl: write_cmd_offset as %d\n", write_cmd_offset);
 
             struct aesd_dev* dev = (struct aesd_dev*)filp->private_data;
-
-
-            // //Starting point at buffer->out_offs
-            // int entryOffset = dev->buffer->out_offs; //0?*******
-            // int numEntriesChecked = 0; //Want to stop if all entries have been checked (since char_offset is if concatenated end to end, doesn't loop)
-
 
             size_t tempFpos = 0;
             int entryOffset = dev->buffer->out_offs;
@@ -319,13 +329,22 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 
             //Stops when tempFpos and entryOffset at the start of write_cmd
             while (numEntriesChecked < write_cmd) {
-                tempFpos += dev->buffer->entry[entryOffset].size;
-
-                entryOffset++;
+            
+                
                 if (entryOffset >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
                     entryOffset = 0;
                 }
+
+                if(!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
+                    break;
+                }
+
+                //TempFpos acts as total size after the loop
+                tempFpos += dev->buffer->entry[entryOffset].size;
+
+                entryOffset++;
                 numEntriesChecked++;
+
             }
 
             if (write_cmd_offset >= dev->buffer->entry[entryOffset].size) {
@@ -334,46 +353,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             tempFpos += write_cmd_offset;
             filp->f_pos = tempFpos;
 
-
-
-
-            // //Refernce: Copilot AI debugging (was originally checking 'numBytesCounted < char_offset',
-            // //but that assumed the buffer was full)
-            // while (numEntriesChecked < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
-
-            //     size_t entrySize = dev->buffer->entry[entryOffset].size;
-
-                
-
-            //     if (numEntriesChecked == write_cmd) {
-                    
-            //         //Now check for offset
-
-            //         if (write_cmd_offset >= entrySize) {
-            //             retval = -EINVAL;
-            //             break;
-            //         }
-
-            //         //Set seek location to the specific offset
-            //         filp->f_pos = dev->buffer->entry[entryOffset].buffptr + write_cmd_offset;
-
-            //     }
-            //     numEntriesChecked++;
-
-
-            //     entryOffset++; //Incrementing for next entry to be read
-            //     if (entryOffset == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
-            //         entryOffset = 0;
-            //     }
-
-            //     //Stop if reached end of non-full buffer
-            //     if (!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
-            //         retval = -EINVAL;
-            //         break;
-            //     }
-            // }
-
-            // retval = foundEntry->buffptr + entryOffset; //************* */
+            printk("Ioctl: f_pos updated to %lld\n", filp->f_pos);
 
             break;
 
