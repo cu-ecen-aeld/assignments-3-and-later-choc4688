@@ -204,6 +204,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
 loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
 
+    //Reference: Used copilot AI for some general debugging / catching mistakes
+
 	struct aesd_dev *dev = filp->private_data;
 	loff_t newpos;
 
@@ -280,6 +282,7 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 
+    //Reference: Used copilot AI for some general debugging / catching mistakes
 
     int err = 0;
 	int retval = 0;
@@ -310,6 +313,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             
             struct aesd_seekto temp;
 
+            //Reference: Originally did not remember to add copy, caught with Copilot AI
             int status = copy_from_user(&temp, (const void __user*)arg, sizeof(temp));
             if (status != 0) {
                 return -EFAULT;
