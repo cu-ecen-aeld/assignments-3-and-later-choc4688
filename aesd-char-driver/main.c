@@ -21,6 +21,8 @@
 #include "aesd-circular-buffer.h"
 
 #include <linux/string.h>
+#include "aesd_ioctl.h"
+#include <linux/uaccess.h>
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -29,6 +31,18 @@ MODULE_AUTHOR("Chase O'Connell");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
+
+//Reference: Asked ChatGPT for a helper function as my circular buffer kept the same contents between runs
+static bool bufferCleared = false;
+void clear_circular_buffer(void)
+{
+    for (int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
+        kfree(aesd_device.buffer->entry[i].buffptr);  // Free each buffer entry
+        aesd_device.buffer->entry[i].buffptr = NULL;   // Null out the pointer
+        aesd_device.buffer->entry[i].size = 0;         // Reset the size
+    }
+}
+
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
@@ -41,6 +55,12 @@ int aesd_open(struct inode *inode, struct file *filp)
     filp->private_data = dev;
 
     PDEBUG("Finished aesd_open()\n");
+
+    if (!bufferCleared) {
+        clear_circular_buffer();
+        bufferCleared = true;
+    }
+    
 
     return 0; //Success
 }
@@ -68,6 +88,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     size_t entryOffset; //The found char is stored at this offset after calling find_entry_offset_for_fpos
     size_t numBytesCopied = 0;
 
+    printk("Read: fpos at %lld\n", *f_pos);
+
     mutex_lock(&dev->buffMutex);
 
     //Reference: Used Copilot AI for debugging to determine why my original code passed natively but not in QEMU.
@@ -79,7 +101,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
             break;
         }
         size_t bytesAvailable = foundEntry->size - entryOffset;
-        size_t bytesToCopy = min(count, bytesAvailable);
+        size_t bytesToCopy = min(count - numBytesCopied, bytesAvailable);
         if (copy_to_user(buf + numBytesCopied, foundEntry->buffptr + entryOffset, bytesToCopy)) {
             retval = -EFAULT;
             goto out;
@@ -179,10 +201,179 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         return retval;
 }
 
+
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
+
+    //Reference: Used copilot AI for some general debugging / catching mistakes
+
+	struct aesd_dev *dev = filp->private_data;
+	loff_t newpos;
+
+    mutex_lock(&dev->buffMutex);
+
+	switch(whence) {
+	  case 0: /* SEEK_SET */
+		newpos = off;
+		break;
+
+	  case 1: /* SEEK_CUR */
+		newpos = filp->f_pos + off;
+		break;
+
+	  case 2: /* SEEK_END */
+
+        //Need to obtain end pointer
+        //Should be zero-referenced
+
+
+        //Starting point at buffer->out_offs
+        size_t tempFpos = 0;
+        int entryOffset = dev->buffer->out_offs;
+        int numEntriesChecked = 0; //Want to stop if all entries have been checked
+
+        printk("Before loop of llseek");
+
+        //Stops when all entries have been checked and tempFpos contains end
+        while (numEntriesChecked < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+
+            tempFpos += dev->buffer->entry[entryOffset].size;
+
+            numEntriesChecked++;
+            entryOffset++;
+            if (entryOffset >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+                entryOffset = 0;
+            }
+
+
+            if(!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
+                tempFpos += dev->buffer->entry[entryOffset].size; //***** */
+                break;
+            }
+        }
+
+        //tempFpos now contains the size of the circular buffer / last byte count
+        newpos = tempFpos + off;
+
+        //Reference: Copilot AI for the check below - I missed originally
+        if (newpos < 0 || newpos > tempFpos) {
+            mutex_unlock(&dev->buffMutex);
+            return -EINVAL; //EINVAL means invalid argument
+        }
+
+
+		break;
+
+	  default: /* can't happen */
+        mutex_unlock(&dev->buffMutex);
+		return -EINVAL;
+	}
+	if (newpos < 0) {
+        mutex_unlock(&dev->buffMutex);
+        return -EINVAL;
+    } 
+
+
+    mutex_unlock(&dev->buffMutex);
+	filp->f_pos = newpos;
+	return newpos;
+
+}
+
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+
+    //Reference: Used copilot AI for some general debugging / catching mistakes
+
+    int err = 0;
+	int retval = 0;
+    
+	/*
+	 * extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+	 */
+	if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) return -ENOTTY;
+
+	/*
+	 * the direction is a bitmask, and VERIFY_WRITE catches R/W
+	 * transfers. `Type' is user-oriented, while
+	 * access_ok is kernel-oriented, so the concept of "read" and
+	 * "write" is reversed
+	 */
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok((void __user *)arg, _IOC_SIZE(cmd));
+	if (err) return -EFAULT;
+
+
+    switch(cmd) {
+
+        case AESDCHAR_IOCSEEKTO:
+            
+            struct aesd_seekto temp;
+
+            //Reference: Originally did not remember to add copy, caught with Copilot AI
+            int status = copy_from_user(&temp, (const void __user*)arg, sizeof(temp));
+            if (status != 0) {
+                return -EFAULT;
+            }
+
+            uint32_t write_cmd = temp.write_cmd;
+            uint32_t write_cmd_offset = temp.write_cmd_offset;
+
+            printk("Ioctl: write_cmd as %d\n", write_cmd);
+            printk("Ioctl: write_cmd_offset as %d\n", write_cmd_offset);
+
+            struct aesd_dev* dev = (struct aesd_dev*)filp->private_data;
+
+            size_t tempFpos = 0;
+            int entryOffset = dev->buffer->out_offs;
+            int numEntriesChecked = 0;
+
+            //Stops when tempFpos and entryOffset at the start of write_cmd
+            while (numEntriesChecked < write_cmd) {
+            
+                
+                if (entryOffset >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+                    entryOffset = 0;
+                }
+
+                if(!dev->buffer->full && entryOffset == dev->buffer->in_offs) {
+                    break;
+                }
+
+                //TempFpos acts as total size after the loop
+                tempFpos += dev->buffer->entry[entryOffset].size;
+
+                entryOffset++;
+                numEntriesChecked++;
+
+            }
+
+            if (write_cmd_offset >= dev->buffer->entry[entryOffset].size) {
+                return -EINVAL;
+            }
+            tempFpos += write_cmd_offset;
+            filp->f_pos = tempFpos;
+
+            printk("Ioctl: f_pos updated to %lld\n", filp->f_pos);
+
+            break;
+
+        default:
+            return -ENOTTY;
+    }
+
+    return retval;
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
+    .llseek =   aesd_llseek,
     .read =     aesd_read,
     .write =    aesd_write,
+    .unlocked_ioctl = aesd_ioctl,
     .open =     aesd_open,
     .release =  aesd_release,
 };
